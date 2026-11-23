@@ -54,12 +54,38 @@ runaway/
 ### 2. Owner Operations Portal (`admin/`)
 - **Authentication Guard**: Session-based authentication (`sessionStorage.runaway_owner_session`) protecting the console.
 - **Default Owner Passcode**: `runaway2026` (or `admin`).
-- **Live KPI Counters**: Instant tracking of Total Revenue, Total Orders, Average Order Value (AOV), and Pending Orders in Nigerian Naira (`₦`).
-- **Order Management & Packing Slips**: Real-time filtering by status (`All`, `Pending`, `Fulfilled`, `Cancelled`), printable dispatch slips with full customer address & phone coordinates, and 12-column CSV export.
+- **Owner KPIs**: Revenue and average order value count orders marked paid; order, fulfillment, and payment data is currently saved in this browser only.
+- **Order Management & Packing Slips**: Search and filter orders, manage payment and fulfillment states, add courier and tracking details, print slips, and export order data to CSV.
 - **Catalogue CRUD & Preview**: In-dashboard modal previewing, custom piece uploading, full specifications/pricing editing, deletion with confirmation, and **"Restore Core Kit ↺"** recovery tool.
-- **Announcement Control**: Update storefront marquee banner live from the dashboard.
+- **Inventory Fields**: Assign a SKU, product-level quantity, and low-stock threshold to each piece. Counts are not tracked by size or color yet.
+- **Announcement Control**: Preview the storefront marquee text before saving it.
+
+The owner console still uses browser storage. Orders, inventory edits, and announcements do not sync across devices. A shared database is not enabled; configure owner authentication and a private data service before storing customer records centrally.
 
 ---
+
+## ✉️ Order Emails (Resend)
+
+The Vercel function at `/api/order-email` sends an order confirmation to the buyer, a new-order notice to the shop inbox, and saves newsletter signups as Resend contacts. The Resend key is read only by the server function.
+
+1. Verify a sending domain in Resend and create a sending API key.
+2. Add these variables in Vercel Project Settings → Environment Variables:
+   - `RESEND_API_KEY` — the Resend sending key.
+   - `RESEND_FROM_EMAIL` — a sender on your verified domain, for example `RUNAWAY <orders@yourdomain.com>`.
+   - `ORDER_NOTIFICATION_EMAIL` — optional shop inbox for new-order alerts.
+   - `RESEND_NEWSLETTER_SEGMENT_ID` — optional Resend segment ID for newsletter signups.
+3. Add the same values to `.env.local` for local work with `npx vercel dev`. Keep `.env.local` private; `.env.example` shows the variable names.
+
+The storefront still keeps its order list in the customer's browser. Resend sends the confirmation and shop notification, but this email integration does not create a shared order database for the admin dashboard.
+
+## 💳 Checkout Payments (Paystack)
+
+Checkout starts a Paystack hosted payment session from `/api/order-payment`. The server calculates the amount from the core catalogue, and verifies the returned transaction and amount before marking an order paid or sending the Resend receipt. The Paystack secret stays on the server. Custom products created in browser storage are not eligible for checkout yet.
+
+1. Add `PAYSTACK_SECRET_KEY` to Vercel Environment Variables, starting with a Paystack test secret (`sk_test_…`). Set the same variable in `.env.local` when using `npx vercel dev`.
+2. Complete a test checkout, then switch to a live secret key only after confirming your Paystack account and checkout settings.
+
+Payment verification currently returns the paid order to the buyer's browser, where the admin order list is stored. This prototype does not yet have a shared order database or webhook-backed recovery if the customer closes the browser before returning from Paystack.
 
 ## 🚀 Running the Project
 
@@ -90,7 +116,7 @@ python -m http.server 8080
 ### Method 1: GitHub Integration (Recommended — 1-Click Automated CI/CD)
 
 1. Go to [vercel.com/new](https://vercel.com/new) and log in with your GitHub account.
-2. Under **"Import Git Repository"**, select **`Wondergasper/runaway`**.
+2. Under **"Import Git Repository"**, select **`Runaway-atelier/Runaway`**.
 3. Configure Project Settings:
    - **Framework Preset**: `Other`
    - **Root Directory**: `./` (default)

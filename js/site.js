@@ -16,9 +16,18 @@ const Cart = {
   add(item, qty = 1) {
     const key = `${item.slug}__${item.size}__${item.color}`;
     const found = this.items.find((i) => i.key === key);
-    if (found) found.qty = Math.min(99, found.qty + qty);
-    else this.items.push({ ...item, key, qty: Math.max(1, Math.min(99, qty)) });
+    const product = typeof getProduct === "function" ? getProduct(item.slug) : null;
+    const tracked = product && product.stock !== undefined && product.stock !== null && Number.isFinite(Number(product.stock));
+    const alreadyInBag = this.items.filter((entry) => entry.slug === item.slug).reduce((sum, entry) => sum + entry.qty, 0);
+    const available = tracked ? Math.max(0, Number(product.stock) - alreadyInBag) : 99;
+    if (available < 1) { toast("This piece is out of stock."); return false; }
+    const requested = Math.max(1, Math.min(99, Number(qty) || 1));
+    const accepted = Math.min(requested, available);
+    if (accepted < requested) toast(`Only ${accepted + (found?.qty || 0)} left in stock.`);
+    if (found) found.qty += accepted;
+    else this.items.push({ ...item, key, qty: accepted });
     this.save();
+    return true;
   },
   count() { return this.items.reduce((n, i) => n + i.qty, 0); },
   total() { return this.items.reduce((n, i) => n + i.price * i.qty, 0); },
@@ -136,7 +145,7 @@ function toast(msg) {
 /* ── cart drawer (Apple fluid direct manipulation: bag → checkout → done) ── */
 const drawerRoot = $("drawerRoot");
 const drawerEl = drawerRoot ? drawerRoot.querySelector(".drawer") : null;
-let step = "bag", coName = "", coEmail = "", coPhone = "", coAddress = "", coCity = "", coState = "Lagos", lastOrderId = "";
+let step = "bag", coName = "", coEmail = "", coPhone = "", coAddress = "", coCity = "", coState = "Lagos", lastOrderId = "", lastOrderEmailSent = false, paymentCallbackStatus = "";
 
 function openDrawer() {
   if (!drawerRoot) return;
@@ -301,14 +310,15 @@ function paintBag() {
   if (title) title.textContent = step === "done" ? "Confirmed" : step === "checkout" ? "Checkout" : `Bag (${n})`;
 
   if (step === "done") {
-    const esc = (s) => (s || "").replace(/"/g, "&quot;");
+    const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
     body.innerHTML = `
       <div class="done-box">
-        <h3 class="gold-foil">Order Dispatched</h3>
+        <h3 class="gold-foil">Order Received</h3>
         <p class="gold tabular" style="font-size:1.15rem;letter-spacing:.08em;margin-top:.4rem;font-weight:600;">#${lastOrderId}</p>
         <p class="muted small" style="margin-top:.6rem;line-height:1.5;">
           Thank you, <b>${esc(coName)}</b>. Your order has been placed into our atelier dispatch queue.
         </p>
+        <p class="small" style="margin-top:.7rem;line-height:1.5;">${lastOrderEmailSent ? `A confirmation was sent to <b>${esc(coEmail)}</b>.` : `We could not send the confirmation email to <b>${esc(coEmail)}</b>. Keep your order ID handy if you need help.`}</p>
         <div style="margin-top:1rem;padding:.9rem;background:var(--surface);border:1px solid var(--line);border-radius:2px;text-align:left;font-size:.82rem;">
           <div style="display:flex;justify-content:space-between;margin-bottom:.4rem;">
             <span class="subtle">Destination</span>
@@ -327,12 +337,12 @@ function paintBag() {
     return;
   }
   if (step === "checkout") {
-    const esc = (s) => (s || "").replace(/"/g, "&quot;");
+    const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     body.innerHTML = `
       <form class="checkout-form" id="coForm" style="display:flex;flex-direction:column;gap:.75rem;">
         <div>
           <p class="muted small" style="margin-bottom:.2rem;">Lagos Atelier & Nationwide Express Courier</p>
-          <span class="subtle" style="font-size:.7rem;">All orders packaged in RUNAWAY luxury protective cases.</span>
+          <span class="subtle" style="font-size:.7rem;">Secure payment by Paystack. You’ll return here after payment.</span>
         </div>
         <label>Full Name *<input id="coName" value="${esc(coName)}" autocomplete="name" placeholder="e.g. Adebayo Adeleke" required /></label>
         <label>Email Address *<input id="coEmail" type="email" value="${esc(coEmail)}" autocomplete="email" placeholder="e.g. adebayo@runners.ng" required /></label>
@@ -356,7 +366,7 @@ function paintBag() {
             </select>
           </label>
         </div>
-        <p class="form-err" id="coErr" style="color:#ef4444;font-size:.75rem;min-height:1rem;"></p>
+        <p class="form-err" id="coErr" style="color:#ef4444;font-size:.75rem;min-height:1rem;">${paymentCallbackStatus}</p>
         <div style="padding:.7rem .8rem;background:var(--surface);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
           <span class="small subtle">Nationwide Courier:</span>
           <span class="small gold"><b>FREE (₦0)</b></span>
@@ -367,10 +377,10 @@ function paintBag() {
         </p>
       </form>`;
     foot.innerHTML = `
-      <button class="btn btn-gold block" id="placeBtn"><span>Complete Order & Reserve Pieces ↗</span></button>
+      <button class="btn btn-gold block" id="placeBtn"><span>Continue to secure payment ↗</span></button>
       <button class="btn btn-ghost block" id="backBtn" style="margin-top:.6rem"><span>Back to bag</span></button>`;
     $("backBtn").onclick = () => { step = "bag"; paintBag(); };
-    $("placeBtn").onclick = () => {
+    $("placeBtn").onclick = async () => {
       coName = $("coName")?.value?.trim() || "";
       coEmail = $("coEmail")?.value?.trim() || "";
       coPhone = $("coPhone")?.value?.trim() || "";
@@ -383,42 +393,44 @@ function paintBag() {
       if (!coPhone || coPhone.length < 7) { $("coErr").textContent = "Please enter your phone number for courier delivery."; return; }
       if (!coAddress) { $("coErr").textContent = "Please enter your delivery street address."; return; }
 
-      const generatedId = "RW-" + Math.floor(1000 + Math.random() * 9000);
-      lastOrderId = generatedId;
+      const placeButton = $("placeBtn");
+      if (placeButton) { placeButton.disabled = true; placeButton.querySelector("span").textContent = "Opening secure checkout…"; }
+
+      const orderQuantities = Cart.items.reduce((totals, item) => {
+        totals[item.slug] = (totals[item.slug] || 0) + Number(item.qty || 1);
+        return totals;
+      }, {});
+      const unavailableSlug = Object.keys(orderQuantities).find((slug) => {
+        const product = typeof getProduct === "function" ? getProduct(slug) : null;
+        return product && product.stock !== undefined && product.stock !== null && orderQuantities[slug] > Number(product.stock);
+      });
+      const unavailable = unavailableSlug ? Cart.items.find((item) => item.slug === unavailableSlug) : null;
+      if (unavailable) {
+        const product = getProduct(unavailable.slug);
+        $("coErr").textContent = `${product?.name || "A piece"} no longer has enough stock. Update your bag and try again.`;
+        if (placeButton) { placeButton.disabled = false; placeButton.querySelector("span").textContent = "Continue to secure payment ↗"; }
+        return;
+      }
 
       try {
-        const order = {
-          id: generatedId,
-          date: new Date().toISOString(),
-          customer: {
-            name: coName,
-            email: coEmail,
-            phone: coPhone,
-            address: coAddress,
-            city: coCity,
-            state: coState
-          },
-          items: Cart.items.map((it) => ({
-            key: it.key,
-            name: it.name,
-            price: it.price,
-            qty: it.qty,
-            size: it.size,
-            colorName: it.colorName,
-            image: it.image
-          })),
-          total: Cart.total(),
-          status: "Pending"
-        };
-        const orders = JSON.parse(localStorage.getItem("runaway_orders") || "[]");
-        orders.unshift(order);
-        localStorage.setItem("runaway_orders", JSON.stringify(orders));
-      } catch (err) {
-        console.error("Order persistence error:", err);
+        const response = await fetch("/api/order-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "initialize",
+            customer: { name: coName, email: coEmail, phone: coPhone, address: coAddress, city: coCity, state: coState },
+            items: Cart.items.map((item) => ({ slug: item.slug, size: item.size, color: item.color, price: item.price, qty: item.qty })),
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok || !result.authorizationUrl) throw new Error(result.error || "Could not start payment.");
+        sessionStorage.setItem("runaway_pending_payment", JSON.stringify({ reference: result.reference, orderId: result.orderId }));
+        window.location.assign(result.authorizationUrl);
+      } catch (error) {
+        $("coErr").textContent = error.message && !error.message.includes("JSON") ? error.message : "Payment service is unavailable here. Run the site with Vercel Dev and configure PAYSTACK_SECRET_KEY.";
+        if (placeButton) { placeButton.disabled = false; placeButton.querySelector("span").textContent = "Continue to secure payment ↗"; }
       }
-      Cart.clear();
-      step = "done";
-      paintBag();
     };
     return;
   }
@@ -459,20 +471,120 @@ function paintBag() {
 $("drawerBody")?.addEventListener("click", (e) => {
   const dec = e.target.closest("[data-dec]"), inc = e.target.closest("[data-inc]"), rem = e.target.closest("[data-rem]");
   if (dec) { const it = Cart.items.find((i) => i.key === dec.dataset.dec); if (it) { it.qty--; if (it.qty <= 0) Cart.items = Cart.items.filter((i) => i.key !== it.key); Cart.save(); paintBag(); } }
-  if (inc) { const it = Cart.items.find((i) => i.key === inc.dataset.inc); if (it) { it.qty = Math.min(99, it.qty + 1); Cart.save(); paintBag(); } }
+  if (inc) { const it = Cart.items.find((i) => i.key === inc.dataset.inc); if (it) { Cart.add(it, 1); paintBag(); } }
   if (rem) { Cart.items = Cart.items.filter((i) => i.key !== rem.dataset.rem); Cart.save(); paintBag(); }
 });
 if (drawerRoot) paintBag();
 
+async function handlePaymentReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const reference = params.get("reference") || params.get("trxref");
+  if (!reference) return;
+  const pending = (() => { try { return JSON.parse(sessionStorage.getItem("runaway_pending_payment") || "null"); } catch { return null; } })();
+  if (!pending || pending.reference !== reference) {
+    paymentCallbackStatus = "We could not match this payment to your checkout. Contact RUNAWAY support with your payment reference.";
+    step = "checkout";
+    openDrawer();
+    paintBag();
+    return;
+  }
+
+  paymentCallbackStatus = "Checking your payment securely…";
+  step = "checkout";
+  openDrawer();
+  paintBag();
+  try {
+    const response = await fetch("/api/order-payment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "verify", reference }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.error || "Payment verification failed.");
+    if (!result.paid) {
+      paymentCallbackStatus = "Payment is not marked successful yet. If you completed payment, wait a moment and reopen your order using its reference.";
+      paintBag();
+      return;
+    }
+
+    const order = result.order;
+    if (order.id !== pending.orderId) throw new Error("Payment reference did not match this order.");
+    history.replaceState({}, "", `${location.pathname}${location.hash}`);
+    let orders = [];
+    try { orders = JSON.parse(localStorage.getItem("runaway_orders") || "[]"); } catch {}
+    if (!orders.some((entry) => entry.id === order.id)) {
+      orders.unshift(order);
+      localStorage.setItem("runaway_orders", JSON.stringify(orders));
+      const products = JSON.parse(localStorage.getItem("runaway_custom_products") || "[]");
+      let stockChanged = false;
+      for (const item of order.items) {
+        const product = products.find((entry) => entry.slug === item.slug);
+        if (product && product.stock !== undefined && product.stock !== null && Number.isFinite(Number(product.stock))) {
+          product.stock = Math.max(0, Number(product.stock) - Number(item.qty || 1));
+          stockChanged = true;
+        }
+      }
+      if (stockChanged) localStorage.setItem("runaway_custom_products", JSON.stringify(products));
+    }
+
+    coName = order.customer.name;
+    coEmail = order.customer.email;
+    coPhone = order.customer.phone;
+    coAddress = order.customer.address;
+    coCity = order.customer.city;
+    coState = order.customer.state;
+    lastOrderId = order.id;
+    lastOrderEmailSent = false;
+    try {
+      const emailResponse = await fetch("/api/order-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...order, type: "order" }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const emailResult = await emailResponse.json();
+      lastOrderEmailSent = emailResponse.ok && emailResult.customerEmailSent === true;
+    } catch {}
+    sessionStorage.removeItem("runaway_pending_payment");
+    Cart.clear();
+    paymentCallbackStatus = "";
+    step = "done";
+    paintBag();
+  } catch (error) {
+    paymentCallbackStatus = `${error.message || "We could not verify the payment yet."} Keep the bag open and try again, or contact support with reference ${reference}.`;
+    step = "checkout";
+    paintBag();
+  }
+}
+
+window.addEventListener("load", handlePaymentReturn, { once: true });
+
 /* ── newsletter + year ── */
-$("joinForm")?.addEventListener("submit", (e) => {
+$("joinForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const v = $("joinEmail").value.trim();
+  const email = $("joinEmail").value.trim();
+  const website = $("joinWebsite")?.value || "";
   const msg = $("joinMsg");
-  if (!v.includes("@") || v.length < 5) { msg.textContent = "Enter a valid email."; return; }
-  e.target.style.display = "none";
-  msg.textContent = "You're on the list. Watch the dark hours.";
-  toast("Joined the list");
+  const submit = e.target.querySelector('button[type="submit"]');
+  if (!email.includes("@") || email.length < 5) { msg.textContent = "Enter a valid email."; return; }
+  if (submit) { submit.disabled = true; submit.querySelector("span").textContent = "Joining…"; }
+  try {
+    const response = await fetch("/api/order-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "newsletter", email, website }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error("Newsletter signup failed.");
+    e.target.style.display = "none";
+    msg.textContent = "You're on the list. Move your own way.";
+    toast("Joined the list");
+  } catch {
+    msg.textContent = "We couldn't add you just now. Please try again.";
+    if (submit) { submit.disabled = false; submit.querySelector("span").textContent = "Join"; }
+  }
 });
 const yr = $("year");
 if (yr) yr.textContent = new Date().getFullYear();
@@ -535,9 +647,9 @@ function ensureTrackOrderModal() {
         return;
       }
 
-      const isFulfilled = found.status === "Fulfilled";
-      const statusText = isFulfilled ? "Dispatched via RUNAWAY Courier" : "Processing at Lagos Atelier";
-      const badgeClass = isFulfilled ? "badge-fulfilled" : "badge-pending";
+      const fulfillment = found.fulfillmentStatus || (found.status === "Fulfilled" ? "Shipped" : found.status || "Pending");
+      const statusText = fulfillment === "Shipped" || fulfillment === "Delivered" ? `${fulfillment}${found.carrier ? ` · ${found.carrier}` : ""}` : fulfillment === "Cancelled" ? "Order cancelled" : "Order being prepared";
+      const badgeClass = fulfillment === "Shipped" || fulfillment === "Delivered" ? "badge-fulfilled" : fulfillment === "Cancelled" ? "badge-cancelled" : "badge-pending";
 
       const itemsList = (found.items || []).map((it) => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--line);font-size:.82rem;">
@@ -570,9 +682,10 @@ function ensureTrackOrderModal() {
           </div>
 
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:.4rem;">
-            <span class="subtle" style="font-size:.8rem;">Order Total Paid:</span>
+            <span class="subtle" style="font-size:.8rem;">Order total · ${found.paymentStatus || "Unpaid"}</span>
             <b class="gold tabular" style="font-size:1.1rem;">${money(found.total)}</b>
           </div>
+          ${found.trackingNumber ? `<p class="subtle" style="font-size:.75rem;margin-top:.6rem;">Tracking: ${found.trackingNumber}</p>` : ""}
         </div>
       `;
     });

@@ -20,3 +20,8 @@ scratch/
 # Temporary files
 *.tmp
 *.bak
+
+# Local credentials
+.env
+.env.*
+!.env.example

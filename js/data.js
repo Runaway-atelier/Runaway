@@ -23,7 +23,10 @@ const PRODUCTS = [
       "A raglan compression tee cut for heat, speed, and the hours after. Gold piping traces the shoulders. A gold-to-violet gradient panel runs the side seam. RUNAWAY is set vertically down the spine.",
     story: "Built as the house kit — the piece you train in, travel in, and refuse to take off. Engineered stretch holds shape through the session. Flatlock seams disappear against skin. A woven hem label is the only signature you need.",
     images: ["tee-front.jpg", "tee-back.jpg", "lifestyle-tee.jpg", "tee-detail-logo.jpg", "tee-detail-seam.jpg", "tee-detail-sleeve.jpg", "tee-detail-hem.jpg"],
-    colors: [{ id: "eclipse", name: "Eclipse", swatch: "#0c0c0c" }],
+    colors: [
+      { id: "eclipse", name: "Black", swatch: "#0c0c0c" },
+      { id: "white", name: "White", swatch: "#f4f1e8", images: ["tee-white-front.jpg"] },
+    ],
     sizes: ["S", "M", "L", "XL", "XXL"],
     features: [
       { label: "Compression knit", detail: "Holds without binding" },
@@ -43,9 +46,12 @@ const PRODUCTS = [
     tagline: "Cut to move",
     description:
       "Lightweight training shorts with a gold-tipped drawcord, side vents, and the dual-runner mark at the thigh. Quiet luxury for the work that happens before sunrise.",
-    story: "A clean short with no extra noise — just stretch, breathability, and a slit that opens when you stride. The gold tips on the cord are the only flash. Everything else is matte black.",
+    story: "A clean short with no extra noise — stretch, breathability, and a slit that opens when you stride. Made for training and the hours that follow.",
     images: ["shorts-front.jpg", "shorts-back.jpg", "lifestyle-shorts.jpg", "shorts-detail-logo.jpg", "shorts-detail-vent.jpg", "shorts-detail-draw.jpg", "shorts-detail-stitch.jpg"],
-    colors: [{ id: "void", name: "Void", swatch: "#0a0a0a" }],
+    colors: [
+      { id: "void", name: "Black", swatch: "#0a0a0a" },
+      { id: "white", name: "White", swatch: "#f4f1e8", images: ["shorts-white-front.jpg"] },
+    ],
     sizes: ["S", "M", "L", "XL", "XXL"],
     features: [
       { label: "Lightweight", detail: "Feather feel in motion" },

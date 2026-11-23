@@ -56,7 +56,7 @@
       <p class="eyebrow gold">Collection 01</p>
       <h1>The kit</h1>
       <p class="crumbs"><a href="index.html">Home</a> &nbsp;/&nbsp; <b>Collection</b></p>
-      <p class="muted small" style="margin-top:1rem">Three pieces. One language. Compression, shorts, and a skull cap.</p>
+      <p class="muted small" style="margin-top:1rem">Activewear for training, the street, and everything in between.</p>
     </div>
   </section>
 
@@ -71,7 +71,6 @@
 
       <div class="collection-toolbar">
         <div class="collection-search-wrap">
-          <span class="collection-search-icon">🔍</span>
           <input type="search" id="collectionSearch" placeholder="Search collection by piece name or category..." aria-label="Search collection" />
         </div>
         <div class="collection-sort-wrap">
@@ -99,13 +98,13 @@
   <div class="wrap footer-grid">
     <div>
       <p class="brand-mini gold">RUNAWAY</p>
-      <p class="muted small">Performance apparel for athleticism, leisure, and luxury. Cut in black. Finished in gold.</p>
+      <p class="muted small">Activewear for wherever you’re headed. Move your own way.</p>
     </div>
     <div><p class="foot-h">House</p><a href="about.html">The House</a><a href="collection.html">Collection</a></div>
     <div><p class="foot-h">Kit</p><a href="products/aether-compression-tee.html">Aether Tee</a><a href="products/apex-training-shorts.html">Apex Shorts</a><a href="products/velocity-skull-cap.html">Velocity Cap</a></div>
     <div><p class="foot-h">Care</p><span>Cold wash, hang dry</span><span>Ships in 2–4 days</span><span>Free returns, 30 days</span></div>
   </div>
-  <div class="foot-base"><span>© <span id="year"></span> Runaway</span><a href="#track-order" data-action="track-order" class="muted" style="color:var(--gold);margin:0 .6rem;">Track Order 📦</a><a href="admin/login.html" class="muted" style="letter-spacing:.18em;text-transform:uppercase;">House Portal ↗</a><span>Athleticism · Leisure · Luxury</span></div>
+  <div class="foot-base"><span>© <span id="year"></span> Runaway</span><a href="#track-order" data-action="track-order" class="muted" style="color:var(--gold);margin:0 .6rem;">Track Order</a><a href="admin/login.html" class="muted" style="letter-spacing:.18em;text-transform:uppercase;">House Portal ↗</a><span>Move · Escape · Chase · Become</span></div>
 </footer>
 
 <div class="drawer-root" id="drawerRoot" aria-hidden="true">
@@ -133,9 +132,10 @@ let activeFilter = "All";
 let searchQuery = "";
 let sortBy = "default";
 
-function resolveProductImage(p, idx = 0) {
-  if (p.images && p.images[idx]) {
-    const src = p.images[idx];
+function resolveProductImage(p, idx = 0, color = (p.colors || [])[0]) {
+  const images = Array.isArray(color?.images) && color.images.length ? color.images : p.images;
+  if (images && images[idx]) {
+    const src = images[idx];
     return (src.startsWith("data:") || src.startsWith("http")) ? src : IMG + src;
   }
   if (p.image) {
@@ -144,28 +144,28 @@ function resolveProductImage(p, idx = 0) {
   return IMG + "logo-runners.png";
 }
 
-function cardHTML(p) {
-  const mainImg = resolveProductImage(p, 0);
-  const fileLink = p.file || ("products/product.html?slug=" + encodeURIComponent(p.slug));
+function cardHTML(p, color = (p.colors || [])[0]) {
+  const mainImg = resolveProductImage(p, 0, color);
+  const baseLink = p.file || ("products/product.html?slug=" + encodeURIComponent(p.slug));
+  const fileLink = color?.id ? `${baseLink}${baseLink.includes("?") ? "&" : "?"}color=${encodeURIComponent(color.id)}` : baseLink;
   return `
-  <article class="card">
+  <article class="card" data-slug="${p.slug}" data-color="${color?.id || ""}">
     <a href="${fileLink}" style="display:block">
       <div class="card-media">
-        <img src="${mainImg}" alt="${p.name}" loading="lazy" />
+        <img src="${mainImg}" alt="${p.name}${color?.name ? ` in ${color.name}` : ""}" loading="lazy" />
         <span class="card-badge">${p.category}</span>
       </div>
       <div class="card-row">
-        <div><p class="card-cat">${p.tagline || ""}</p><h3 class="card-name">${p.name}</h3></div>
+        <div><p class="card-cat">${p.tagline || ""}${color?.name ? ` · ${color.name}` : ""}</p><h3 class="card-name">${p.name}</h3></div>
         <p class="card-price">${money(p.price)}</p>
       </div>
     </a>
     <div style="display:flex;gap:.5rem;margin-top:.8rem;">
       <a href="${fileLink}" class="card-quick" style="position:static;opacity:1;transform:none;flex:1;text-align:center;display:grid;place-items:center;">View Piece →</a>
-      <button class="card-quick" data-add="${p.slug}" style="position:static;opacity:1;transform:none;flex:1;background:var(--gold);color:var(--ink);">Add to bag +</button>
+      <button class="card-quick" data-add="${p.slug}" data-color="${color?.id || ""}" style="position:static;opacity:1;transform:none;flex:1;background:var(--gold);color:var(--ink);">Add to bag +</button>
     </div>
   </article>`;
 }
-
 function renderCategoryChips() {
   if (!categoryChipsWrap) return;
   const all = typeof getAllProducts === "function" ? getAllProducts() : PRODUCTS;
@@ -228,7 +228,15 @@ function renderGrid() {
     return;
   }
 
-  grid.innerHTML = list.map(cardHTML).join("");
+  const cards = list.flatMap((p) => {
+    const colors = p.colors || [];
+    const defaultColor = colors[0];
+    const whiteColor = colors.find((color) => color.id === "white");
+    return whiteColor && whiteColor !== defaultColor
+      ? [cardHTML(p, defaultColor), cardHTML(p, whiteColor)]
+      : [cardHTML(p, defaultColor)];
+  });
+  grid.innerHTML = cards.join("");
   [...grid.children].forEach((c, i) => {
     c.style.opacity = "0"; c.style.transform = "translateY(18px)";
     setTimeout(() => { c.style.opacity = ""; c.style.transform = ""; }, 50 * i + 20);
@@ -258,8 +266,8 @@ grid.addEventListener("click", (e) => {
   const p = getProduct(btn.dataset.add);
   if (!p) return;
   const size = (p.sizes && p.sizes[0]) || "Standard";
-  const colorObj = (p.colors && p.colors[0]) || { id: "default", name: "Standard" };
-  const cartImg = resolveProductImage(p, 0);
+  const colorObj = (p.colors || []).find((color) => color.id === btn.dataset.color) || (p.colors && p.colors[0]) || { id: "default", name: "Standard" };
+  const cartImg = resolveProductImage(p, 0, colorObj);
   Cart.add({ slug: p.slug, name: p.name, price: p.price, size, color: colorObj.id, colorName: colorObj.name, image: cartImg });
   paintBag(); toast(`${p.name} — added to bag`); openDrawer();
 });

@@ -43,7 +43,7 @@
     <article class="stat-card accent">
       <span class="stat-label">Gross Revenue</span>
       <span class="stat-val tabular" id="statRevenue">₦0</span>
-      <span class="stat-sub">From non-cancelled orders</span>
+      <span class="stat-sub">Orders marked paid, excluding refunds</span>
     </article>
     <article class="stat-card">
       <span class="stat-label">Total Orders</span>
@@ -53,7 +53,7 @@
     <article class="stat-card">
       <span class="stat-label">Average Order Value</span>
       <span class="stat-val tabular" id="statAOV">₦0</span>
-      <span class="stat-sub">Revenue per order</span>
+      <span class="stat-sub">Paid order average</span>
     </article>
     <article class="stat-card">
       <span class="stat-label">Pending Fulfillment</span>
@@ -67,7 +67,7 @@
     <div class="panel-head">
       <div>
         <h2 class="panel-title">Customer Orders</h2>
-        <p class="subtle" style="font-size: .75rem; margin-top: .2rem;">Real-time orders placed through the storefront bag & checkout.</p>
+        <p class="subtle" style="font-size: .75rem; margin-top: .2rem;">Orders saved in this browser. Connect a shared database before using across devices.</p>
       </div>
       <div class="panel-toolbar">
         <div class="search-box">
@@ -157,6 +157,7 @@
         <button type="submit" class="btn btn-gold btn-sm"><span>Update Marquee</span></button>
         <button type="button" class="btn btn-ghost btn-sm" id="clearAnnounceBtn"><span>Reset to Default</span></button>
       </form>
+      <div class="announcement-preview" aria-live="polite"><span class="subtle">Storefront preview</span><p id="announcePreview">Your announcement will appear here.</p></div>
       <p id="announceStatus" style="font-size:.78rem;color:var(--gold);margin-top:.6rem;min-height:1rem;"></p>
     </div>
   </section>
@@ -204,6 +205,14 @@
           <input type="text" id="pTagline" placeholder="e.g. Weather-resistant quiet luxury" />
         </label>
       </div>
+
+      <div class="form-row-2">
+        <label>SKU<input type="text" id="pSku" placeholder="e.g. RW-ACT-001" maxlength="40" /></label>
+        <label>Stock quantity<input type="number" id="pStock" min="0" step="1" value="0" /></label>
+      </div>
+      <label class="stock-threshold-label">Low-stock alert at
+        <input type="number" id="pLowStock" min="0" step="1" value="3" />
+      </label>
 
       <label>
         Description & Performance Story
@@ -293,7 +302,7 @@
         <p class="subtle" id="slipDate" style="font-size:.75rem;margin-top:.2rem;"></p>
       </div>
       <div style="display:flex;gap:.6rem;align-items:center;">
-        <button class="btn btn-ghost btn-sm" id="printSlipBtn"><span>Print Slip 🖨️</span></button>
+        <button class="btn btn-ghost btn-sm" id="printSlipBtn"><span>Print Slip</span></button>
         <button class="icon-btn" id="closeDetailBtn" aria-label="Close modal">✕</button>
       </div>
     </div>

@@ -108,9 +108,10 @@ const grid = document.getElementById("productGrid");
 let activeFilter = "All";
 
 
-function resolveProductImage(p, idx = 0) {
-  if (p.images && p.images[idx]) {
-    const src = p.images[idx];
+function resolveProductImage(p, idx = 0, color = (p.colors || [])[0]) {
+  const images = Array.isArray(color?.images) && color.images.length ? color.images : p.images;
+  if (images && images[idx]) {
+    const src = images[idx];
     return (src.startsWith("data:") || src.startsWith("http")) ? src : IMG + src;
   }
   if (p.image) {
@@ -119,20 +120,26 @@ function resolveProductImage(p, idx = 0) {
   return IMG + "logo-runners.png";
 }
 
-function cardHTML(p) {
-  const mainImg = resolveProductImage(p, 0);
-  const fileLink = p.file || ("products/product.html?slug=" + encodeURIComponent(p.slug));
+function productLink(p, color) {
+  const path = p.file || ("products/product.html?slug=" + encodeURIComponent(p.slug));
+  if (!color?.id) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}color=${encodeURIComponent(color.id)}`;
+}
+
+function cardHTML(p, color = (p.colors || [])[0]) {
+  const mainImg = resolveProductImage(p, 0, color);
+  const fileLink = productLink(p, color);
   return `
-  <article class="card" data-slug="${p.slug}">
+  <article class="card" data-slug="${p.slug}" data-color="${color?.id || ""}">
     <div class="card-media">
       <a href="${fileLink}" style="display:block;width:100%;height:100%;">
-        <img src="${mainImg}" alt="${p.name}" loading="lazy" />
+        <img src="${mainImg}" alt="${p.name}${color?.name ? ` in ${color.name}` : ""}" loading="lazy" />
       </a>
       <span class="card-badge">${p.category}</span>
-      <button class="card-quick" data-quickview="${p.slug}">Quick view +</button>
+      <button class="card-quick" data-quickview="${p.slug}" data-quickview-color="${color?.id || ""}">Quick view +</button>
     </div>
     <div class="card-row">
-      <div><p class="card-cat">${p.tagline || ""}</p><h3 class="card-name"><a href="${fileLink}" style="color:inherit">${p.name}</a></h3></div>
+      <div><p class="card-cat">${p.tagline || ""}${color?.name ? ` · ${color.name}` : ""}</p><h3 class="card-name"><a href="${fileLink}" style="color:inherit">${p.name}</a></h3></div>
       <p class="card-price">${money(p.price)}</p>
     </div>
   </article>`;
@@ -141,7 +148,15 @@ function cardHTML(p) {
 function renderGrid() {
   const all = getAllProducts();
   const list = activeFilter === "All" ? all : all.filter((p) => p.category === activeFilter);
-  grid.innerHTML = list.map(cardHTML).join("");
+  const cards = list.flatMap((p) => {
+    const colors = p.colors || [];
+    const defaultColor = colors[0];
+    const whiteColor = colors.find((color) => color.id === "white");
+    return whiteColor && whiteColor !== defaultColor
+      ? [cardHTML(p, defaultColor), cardHTML(p, whiteColor)]
+      : [cardHTML(p, defaultColor)];
+  });
+  grid.innerHTML = cards.join("");
   // entrance stagger
   [...grid.children].forEach((c, i) => {
     c.style.opacity = "0"; c.style.transform = "translateY(18px)";
@@ -165,7 +180,7 @@ document.querySelectorAll(".chip").forEach((chip) =>
 const modal = document.getElementById("qvModal");
 let qv = null, qvColor = null, qvSize = null, qvImgIdx = 0;
 
-function openQuickview(slug, triggerEl) {
+function openQuickview(slug, triggerEl, colorId) {
   qv = getAllProducts().find((x) => x.slug === slug);
   if (!qv) return;
 
@@ -181,7 +196,7 @@ function openQuickview(slug, triggerEl) {
     }
   }
 
-  qvColor = (qv.colors && qv.colors[0]) || { id: "default", name: "Standard", swatch: "#111" };
+  qvColor = (qv.colors || []).find((color) => color.id === colorId) || (qv.colors && qv.colors[0]) || { id: "default", name: "Standard", swatch: "#111" };
   qvSize = (qv.sizes && qv.sizes.length === 1) ? qv.sizes[0] : null;
   qvImgIdx = 0;
 
@@ -194,7 +209,7 @@ function openQuickview(slug, triggerEl) {
   document.getElementById("qvHint").textContent = "";
 
   const qvFull = document.getElementById("qvFull");
-  const fullLink = qv.file || ("products/product.html?slug=" + encodeURIComponent(qv.slug));
+  const fullLink = productLink(qv, qvColor);
   if (qvFull) {
     qvFull.href = fullLink;
     qvFull.style.display = "";
@@ -208,12 +223,12 @@ function openQuickview(slug, triggerEl) {
 }
 function paintQV() {
   const img = document.getElementById("qvImg");
-  const mainImg = resolveProductImage(qv, qvImgIdx);
+  const mainImg = resolveProductImage(qv, qvImgIdx, qvColor);
   img.src = mainImg;
   img.alt = qv.name;
-  const images = Array.isArray(qv.images) && qv.images.length ? qv.images : [qv.image || "logo-runners.png"];
+  const images = Array.isArray(qvColor?.images) && qvColor.images.length ? qvColor.images : (Array.isArray(qv.images) && qv.images.length ? qv.images : [qv.image || "logo-runners.png"]);
   document.getElementById("qvThumbs").innerHTML = images.map((s, i) =>
-    `<button class="${i === qvImgIdx ? "active" : ""}" data-thumb="${i}" aria-label="View image ${i + 1}"><img src="${resolveProductImage(qv, i)}" alt="" loading="lazy" /></button>`
+    `<button class="${i === qvImgIdx ? "active" : ""}" data-thumb="${i}" aria-label="View image ${i + 1}"><img src="${resolveProductImage(qv, i, qvColor)}" alt="" loading="lazy" /></button>`
   ).join("");
   document.getElementById("qvColorName").textContent = qvColor.name;
   document.getElementById("qvColors").innerHTML = (qv.colors || []).map((c) =>
@@ -234,7 +249,7 @@ function closeQuickview() {
 
 document.addEventListener("click", (e) => {
   const qvBtn = e.target.closest("[data-quickview]");
-  if (qvBtn) { openQuickview(qvBtn.dataset.quickview, qvBtn); return; }
+  if (qvBtn) { openQuickview(qvBtn.dataset.quickview, qvBtn, qvBtn.dataset.quickviewColor); return; }
   if (e.target.closest("[data-close-qv]")) { closeQuickview(); return; }
   const th = e.target.closest("[data-thumb]");
   if (th && qv) { qvImgIdx = +th.dataset.thumb; paintQV(); return; }
@@ -247,8 +262,8 @@ addEventListener("keydown", (e) => { if (e.key === "Escape") { closeQuickview();
 
 document.getElementById("qvAdd")?.addEventListener("click", () => {
   if (!qvSize) { document.getElementById("qvHint").textContent = "Choose a size."; return; }
-  const mainImg = resolveProductImage(qv, 0);
-  Cart.add({
+  const mainImg = resolveProductImage(qv, 0, qvColor);
+  const added = Cart.add({
     slug: qv.slug,
     name: qv.name,
     price: qv.price,
@@ -257,6 +272,7 @@ document.getElementById("qvAdd")?.addEventListener("click", () => {
     colorName: qvColor.name,
     image: mainImg
   });
+  if (!added) return;
   closeQuickview();
   paintBag();
   openDrawer();

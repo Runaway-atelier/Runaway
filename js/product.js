@@ -15,14 +15,19 @@
   document.title = `${p.name} — RUNAWAY`;
   let imgIdx = 0;
   const colors = Array.isArray(p.colors) && p.colors.length ? p.colors : [{ id: "core", name: "Core", hex: "#0c0c0c", swatch: "#0c0c0c" }];
-  let color = colors[0];
+  let color = colors.find((item) => item.id === params.get("color")) || colors[0];
   const sizes = Array.isArray(p.sizes) && p.sizes.length ? p.sizes : ["S", "M", "L"];
   let size = sizes.length === 1 ? sizes[0] : null;
 
   const allPieces = typeof getAllProducts === "function" ? getAllProducts() : (typeof PRODUCTS !== "undefined" ? PRODUCTS : []);
   const others = allPieces.filter((x) => x.slug !== p.slug).slice(0, 4);
 
-  const images = Array.isArray(p.images) && p.images.length ? p.images : [p.image || "logo-runners.png"];
+  const defaultImages = Array.isArray(p.images) && p.images.length ? p.images : [p.image || "logo-runners.png"];
+  const imagesForColor = (selectedColor) => Array.isArray(selectedColor?.images) && selectedColor.images.length ? selectedColor.images : defaultImages;
+  let images = imagesForColor(color);
+  const renderThumbs = () => {
+    document.getElementById("pdpThumbs").innerHTML = images.map((src, i) => `<button class="${i === imgIdx ? "active" : ""}" data-thumb="${i}" aria-label="View image ${i + 1}"><img src="${resolveImg(src)}" alt="" loading="lazy" /></button>`).join("");
+  };
   const features = Array.isArray(p.features) ? p.features : [];
 
   document.getElementById("pdpRoot").innerHTML = `
@@ -94,6 +99,11 @@
       const match = colors.find((c) => (c.id || c.name) === sw.dataset.color);
       if (match) {
         color = match;
+        images = imagesForColor(color);
+        imgIdx = 0;
+        document.getElementById("pdpImg").src = resolveImg(images[0]);
+        renderThumbs();
+        if (heroBg) heroBg.src = resolveImg(images[0]);
         document.getElementById("pdpColorName").textContent = color.name;
         root.querySelectorAll("[data-color]").forEach((b) => b.classList.toggle("active", (b.dataset.color === (color.id || color.name))));
       }
@@ -108,7 +118,7 @@
     }
     if (e.target.closest("#pdpAdd")) {
       if (!size) { document.getElementById("pdpHint").textContent = "Choose a size."; return; }
-      Cart.add({ slug: p.slug, name: p.name, price: p.price, size, color: color.id || color.name, colorName: color.name, image: resolveImg(images[0]) });
+      if (!Cart.add({ slug: p.slug, name: p.name, price: p.price, size, color: color.id || color.name, colorName: color.name, image: resolveImg(images[0]) })) return;
       paintBag(); toast(`${p.name} — added to bag`); openDrawer();
     }
   });

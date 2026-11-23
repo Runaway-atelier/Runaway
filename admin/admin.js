@@ -10,6 +10,7 @@ if (sessionStorage.getItem("runaway_owner_session") !== "active") {
 
 // 2. Helpers
 const $ = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
 const formatMoney = (amount) =>
   new Intl.NumberFormat("en-NG", {
@@ -151,7 +152,7 @@ function renderMetrics() {
   const aovEl = $("statAOV");
   const pendingOrdersEl = $("statPending");
 
-  const validOrders = orders.filter((o) => o.status !== "Cancelled");
+  const validOrders = orders.filter((o) => o.status !== "Cancelled" && o.paymentStatus === "Paid");
   const totalRevenue = validOrders.reduce((sum, o) => sum + (o.total || 0), 0);
   const totalCount = orders.length;
   const aov = validOrders.length > 0 ? Math.round(totalRevenue / validOrders.length) : 0;
@@ -227,11 +228,12 @@ function renderOrders() {
         <td class="subtle tabular" style="font-size: .78rem;">${formatDate(o.date)}</td>
         <td>
           <span class="badge badge-${statusClass}">${o.status || "Pending"}</span>
+          <small class="order-status-meta">${o.paymentStatus || "Unpaid"} · ${o.fulfillmentStatus || (o.status === "Fulfilled" ? "Shipped" : o.status || "Pending")}</small>
         </td>
         <td>
           <div class="actions-cell">
             <button class="btn btn-ghost btn-sm" data-action="view-slip" data-id="${o.id}" title="View Slip">
-              <span>Slip 📄</span>
+              <span>Slip</span>
             </button>
             <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${o.id}" data-target="${toggleTargetStatus}">
               <span>${toggleActionText}</span>
@@ -276,6 +278,8 @@ function renderInventory() {
     const sizesList = (p.sizes || []).join(" · ") || "All sizes";
     const isCustom = Boolean(p.isCustom);
     const storefrontUrl = getAdminStorefrontUrl(p);
+    const stockTracked = p.stock !== undefined && p.stock !== null && Number.isFinite(Number(p.stock));
+    const stockCount = stockTracked ? Math.max(0, Number(p.stock)) : null;
 
     return `
       <div class="inv-card">
@@ -285,11 +289,13 @@ function renderInventory() {
           <span class="inv-cat">${p.category}</span>
           <h4 class="inv-name">${p.name}</h4>
           <span class="inv-price tabular">${formatMoney(p.price)}</span>
+          <p class="inventory-stock ${stockTracked && stockCount <= Number(p.lowStockThreshold ?? 3) ? "is-low" : ""}">${stockTracked ? `${stockCount} in stock${stockCount <= Number(p.lowStockThreshold ?? 3) ? " · Low stock" : ""}` : "Stock not set"}</p>
+          <p class="subtle inventory-sku">SKU: ${escapeHtml(p.sku || "Not set")}</p>
           <p class="subtle" style="font-size: .72rem; margin-top: .3rem;">${sizesList}</p>
           <p class="subtle" style="font-size: .72rem;">Colors: ${colorsList}</p>
           <div class="inv-actions">
             <button class="btn btn-ghost btn-sm" data-action="preview-piece" data-slug="${p.slug}" title="Inspect piece specifications">
-              <span>Preview 👁️</span>
+              <span>Preview</span>
             </button>
             <button class="btn btn-ghost btn-sm btn-edit" data-action="edit-piece" data-slug="${p.slug}" title="Edit piece specifications & price">
               <span>Edit ✏️</span>
@@ -311,7 +317,7 @@ function renderTopSellers() {
   const container = $("topSellersGrid");
   if (!container) return;
 
-  const validOrders = orders.filter((o) => o.status !== "Cancelled");
+  const validOrders = orders.filter((o) => o.status !== "Cancelled" && o.paymentStatus === "Paid");
   const salesMap = {};
 
   validOrders.forEach((o) => {
@@ -328,24 +334,7 @@ function renderTopSellers() {
   const ranked = Object.values(salesMap).sort((a, b) => b.units - a.units || b.revenue - a.revenue);
 
   if (ranked.length === 0) {
-    // Fallback: preview default top catalog pieces
-    const catalogue = getCombinedProducts().slice(0, 3);
-    container.innerHTML = catalogue.map((p, idx) => {
-      let mainImg = p.image || (p.images && p.images[0]) || "../public/images/logo-runners.png";
-      if (typeof mainImg === "string" && !mainImg.startsWith("data:") && !mainImg.startsWith("http") && !mainImg.startsWith("..") && !mainImg.startsWith("/")) {
-        mainImg = `../public/images/${mainImg}`;
-      }
-      return `
-        <div class="seller-card">
-          <span class="seller-rank">#${idx + 1}</span>
-          <img class="seller-img" src="${mainImg}" alt="${p.name}" />
-          <div class="seller-info">
-            <h4 class="seller-name">${p.name}</h4>
-            <span class="seller-stat subtle">Storefront Featured</span>
-            <span class="seller-rev tabular">${formatMoney(p.price)}</span>
-          </div>
-        </div>`;
-    }).join("");
+    container.innerHTML = '<p class="muted analytics-empty">No sales recorded yet. Products will appear here after orders come in.</p>';
     return;
   }
 
@@ -364,7 +353,7 @@ function renderTopSellers() {
         <img class="seller-img" src="${mainImg}" alt="${item.name}" />
         <div class="seller-info">
           <h4 class="seller-name">${item.name}</h4>
-          <span class="seller-stat">${item.units} units fulfilled</span>
+          <span class="seller-stat">${item.units} units sold</span>
           <span class="seller-rev tabular">${formatMoney(item.revenue)}</span>
         </div>
       </div>`;
@@ -400,13 +389,16 @@ function openOrderDetail(orderId) {
       </tr>`;
   }).join("");
 
+  order.paymentStatus ||= "Unpaid";
+  order.fulfillmentStatus ||= order.status === "Fulfilled" ? "Shipped" : order.status || "Pending";
+
   slipBody.innerHTML = `
     <div class="slip-meta-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
       <div>
         <span class="slip-field-label">Customer Details</span>
         <div class="slip-field-val">${order.customer?.name || "Anonymous Runner"}</div>
         <div class="subtle" style="font-size: .75rem;">${order.customer?.email || "—"}</div>
-        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">📞 ${order.customer?.phone || "No phone provided"}</div>
+        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">Phone: ${order.customer?.phone || "No phone provided"}</div>
       </div>
       <div>
         <span class="slip-field-label">Delivery Coordinates</span>
@@ -416,9 +408,22 @@ function openOrderDetail(orderId) {
       <div>
         <span class="slip-field-label">Dispatch Status</span>
         <div class="slip-field-val">
-          <span class="badge badge-${(order.status || "Pending").toLowerCase()}">${order.status || "Pending"}</span>
+          <span class="badge badge-${(order.status || "Pending").toLowerCase()}">${order.fulfillmentStatus}</span>
         </div>
-        <div class="subtle" style="font-size: .75rem; margin-top: .3rem;">Carrier: RUNAWAY Express Courier</div>
+        <div class="order-operations-grid">
+          <label>Payment
+            <select data-order-field="paymentStatus" data-order-id="${order.id}">
+              ${["Unpaid", "Paid", "Refunded"].map((status) => `<option ${((order.paymentStatus || "Unpaid") === status) ? "selected" : ""}>${status}</option>`).join("")}
+            </select>
+          </label>
+          <label>Fulfillment
+            <select data-order-field="fulfillmentStatus" data-order-id="${order.id}">
+              ${["Pending", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => `<option ${((order.fulfillmentStatus || (order.status === "Fulfilled" ? "Shipped" : order.status || "Pending")) === status) ? "selected" : ""}>${status}</option>`).join("")}
+            </select>
+          </label>
+          <label>Carrier<input data-order-field="carrier" data-order-id="${escapeHtml(order.id)}" value="${escapeHtml(order.carrier || "")}" placeholder="Courier" /></label>
+          <label>Tracking number<input data-order-field="trackingNumber" data-order-id="${escapeHtml(order.id)}" value="${escapeHtml(order.trackingNumber || "")}" placeholder="Tracking reference" /></label>
+        </div>
       </div>
     </div>
 
@@ -616,7 +621,7 @@ function exportOrdersToCSV() {
     return;
   }
 
-  const headers = ["Order ID", "Date", "Customer Name", "Customer Email", "Customer Phone", "Street Address", "City", "State", "Status", "Total NGN", "Items Count", "Items Detail"];
+  const headers = ["Order ID", "Date", "Customer Name", "Customer Email", "Customer Phone", "Street Address", "City", "State", "Fulfillment", "Payment", "Carrier", "Tracking Number", "Total NGN", "Items Count", "Items Detail"];
   const rows = orders.map((o) => {
     const itemsDetail = (o.items || [])
       .map((it) => `${it.qty}x ${it.name} (${it.size || "M"}${it.colorName ? " " + it.colorName : ""})`)
@@ -631,7 +636,10 @@ function exportOrdersToCSV() {
       `"${(o.customer?.address || "").replace(/"/g, '""')}"`,
       `"${(o.customer?.city || "").replace(/"/g, '""')}"`,
       `"${(o.customer?.state || "").replace(/"/g, '""')}"`,
-      `"${o.status || "Pending"}"`,
+      `"${o.fulfillmentStatus || (o.status === "Fulfilled" ? "Shipped" : o.status || "Pending")}"`,
+      `"${o.paymentStatus || "Unpaid"}"`,
+      `"${(o.carrier || "").replace(/"/g, '""')}"`,
+      `"${(o.trackingNumber || "").replace(/"/g, '""')}"`,
       `"${o.total || 0}"`,
       `"${(o.items || []).length}"`,
       `"${itemsDetail.replace(/"/g, '""')}"`
@@ -713,13 +721,16 @@ function openEditProduct(slug) {
   if (modalSub) modalSub.textContent = `Modify specifications, pricing, and imagery for "${p.name}".`;
   if (saveBtn) {
     const span = saveBtn.querySelector("span");
-    if (span) span.textContent = "Save Changes ✓";
+    if (span) span.textContent = "Save Changes";
   }
   if (pEditingSlug) pEditingSlug.value = p.slug;
 
   if ($("pName")) $("pName").value = p.name || "";
   if ($("pCategory")) $("pCategory").value = p.category || "Tops";
   if ($("pPrice")) $("pPrice").value = p.price || "";
+  if ($("pSku")) $("pSku").value = p.sku || "";
+  if ($("pStock")) $("pStock").value = Number(p.stock || 0);
+  if ($("pLowStock")) $("pLowStock").value = Number(p.lowStockThreshold ?? 3);
   if ($("pTagline")) $("pTagline").value = p.tagline || "";
   if ($("pDesc")) $("pDesc").value = p.description || p.story || "";
 
@@ -888,6 +899,9 @@ function setupProductUpload() {
       const name = $("pName")?.value?.trim();
       const category = $("pCategory")?.value;
       const price = Number($("pPrice")?.value);
+      const sku = $("pSku")?.value?.trim().toUpperCase() || "";
+      const stock = Math.max(0, Number.parseInt($("pStock")?.value || "0", 10) || 0);
+      const lowStockThreshold = Math.max(0, Number.parseInt($("pLowStock")?.value || "3", 10) || 0);
       const tagline = $("pTagline")?.value?.trim();
       const desc = $("pDesc")?.value?.trim();
       const colorName = $("pColorName")?.value?.trim() || "Eclipse";
@@ -922,6 +936,9 @@ function setupProductUpload() {
         target.name = name;
         target.category = category || "Tops";
         target.price = price;
+        target.sku = sku;
+        target.stock = stock;
+        target.lowStockThreshold = lowStockThreshold;
         target.tagline = tagline || target.tagline || "Engineered Performance Kit Piece";
         target.description = desc || target.description || "Engineered stretch fabric cut for high-heat, high-speed night runs.";
         target.image = currentUploadImage;
@@ -961,6 +978,9 @@ function setupProductUpload() {
           name,
           category: category || "Tops",
           price,
+          sku,
+          stock,
+          lowStockThreshold,
           tagline: tagline || "Engineered Performance Kit Piece",
           description: desc || "Engineered stretch fabric cut for high-heat, high-speed night runs.",
           image: currentUploadImage,
@@ -1026,6 +1046,7 @@ function setupAnnouncementControl() {
   const input = $("announceInput");
   const status = $("announceStatus");
   const clearBtn = $("clearAnnounceBtn");
+  const preview = $("announcePreview");
 
   if (!form || !input) return;
 
@@ -1033,14 +1054,20 @@ function setupAnnouncementControl() {
   if (saved) {
     input.value = saved;
   }
+  const updatePreview = () => {
+    if (preview) preview.textContent = input.value.trim() || "Your announcement will appear here.";
+  };
+  input.addEventListener("input", updatePreview);
+  updatePreview();
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const val = input.value.trim();
     if (val) {
       localStorage.setItem("runaway_announcement", val);
+      updatePreview();
       if (status) {
-        status.textContent = "✓ Storefront marquee banner updated successfully.";
+        status.textContent = "Storefront marquee banner updated successfully.";
         setTimeout(() => { if (status) status.textContent = ""; }, 3000);
       }
     }
@@ -1049,8 +1076,9 @@ function setupAnnouncementControl() {
   clearBtn?.addEventListener("click", () => {
     localStorage.removeItem("runaway_announcement");
     input.value = "";
+    updatePreview();
     if (status) {
-      status.textContent = "✓ Reset to default storefront announcement.";
+      status.textContent = "Reset to default storefront announcement.";
       setTimeout(() => { if (status) status.textContent = ""; }, 3000);
     }
   });
@@ -1154,6 +1182,23 @@ function setupEvents() {
   // Export CSV
   $("exportCsvBtn")?.addEventListener("click", exportOrdersToCSV);
 
+  $("slipBody")?.addEventListener("change", (e) => {
+    const field = e.target.closest("[data-order-field]");
+    if (!field) return;
+    const order = orders.find((item) => item.id === field.dataset.orderId);
+    if (!order) return;
+    const key = field.dataset.orderField;
+    order[key] = field.value.trim();
+    if (key === "fulfillmentStatus") {
+      order.status = field.value === "Cancelled" ? "Cancelled" : ["Shipped", "Delivered"].includes(field.value) ? "Fulfilled" : "Pending";
+    }
+    order.updatedAt = new Date().toISOString();
+    saveOrders();
+    refresh();
+    renderTopSellers();
+    openOrderDetail(order.id);
+  });
+
   // Table action clicks (Toggle status / Delete / View Slip)
   $("ordersTableBody")?.addEventListener("click", (e) => {
     const toggleBtn = e.target.closest('[data-action="toggle"]');
@@ -1172,6 +1217,7 @@ function setupEvents() {
       const order = orders.find((o) => o.id === id);
       if (order) {
         order.status = targetStatus;
+        order.fulfillmentStatus = targetStatus === "Fulfilled" ? "Shipped" : "Pending";
         saveOrders();
         refresh();
         renderTopSellers();
@@ -1245,5 +1291,17 @@ document.addEventListener("DOMContentLoaded", () => {
   renderOrders();
   renderInventory();
   renderTopSellers();
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key === "runaway_custom_products") {
+    loadCustomProducts();
+    renderInventory();
+  }
+  if (event.key === "runaway_orders") {
+    loadOrders();
+    refresh();
+    renderTopSellers();
+  }
 });
 
