@@ -23,12 +23,8 @@
 
     <form class="login-form" id="loginForm">
       <label>
-        Owner email
-        <input type="email" id="ownerEmail" autocomplete="username" placeholder="Your owner email" required />
-      </label>
-      <label>
-        Password
-        <input type="password" id="passcode" autocomplete="current-password" placeholder="Enter your password" required />
+        Owner Secret Key / Passcode
+        <input type="password" id="secretKey" autocomplete="current-password" placeholder="Enter owner secret key" required autofocus />
       </label>
       <div class="login-err" id="loginErr"></div>
       <button type="submit" class="btn btn-gold" id="loginBtn">
@@ -37,7 +33,7 @@
     </form>
 
     <div class="login-hint">
-      <p class="subtle">Sign in with your registered owner account.</p>
+      <p class="subtle">Sign in with your configured owner secret key.</p>
       <p style="margin-top: .6rem;"><a href="../index.html" class="muted" style="text-decoration: underline; font-size: .75rem;">← Return to Storefront</a></p>
     </div>
   </div>

@@ -252,6 +252,20 @@ test('admin requires a confirmed owner, session cookie and preserves provider pa
   const signedOut = await logout(new Request('https://shop.example.com/api/admin-session', { method: 'DELETE', headers: { origin: 'https://shop.example.com' } }));
   assert.match(signedOut.headers.get('set-cookie'), /Max-Age=0/);
 });
+test('admin supports secret key login without supabase auth', async () => {
+  process.env.ADMIN_SECRET_KEY = 'runaway2026!';
+  const invalid = await login(request('/api/admin-session', { secretKey: 'wrong-passcode' }));
+  assert.equal(invalid.status, 401);
+
+  const signedIn = await login(request('/api/admin-session', { secretKey: 'runaway2026!' }));
+  assert.equal(signedIn.status, 200);
+  const cookieHeader = signedIn.headers.get('set-cookie');
+  assert.match(cookieHeader, /runaway_owner=/);
+
+  const cookieVal = cookieHeader.split(';')[0];
+  const response = await adminOrders(new Request('https://shop.example.com/api/admin-orders', { headers: { cookie: cookieVal } }));
+  assert.equal(response.status, 200);
+});
 test('retry worker requires its secret and request size is bounded even without content-length', async () => {
   assert.equal((await worker(new Request('https://shop.example.com/api/email-retry'))).status, 401);
   assert.equal((await worker(new Request('https://shop.example.com/api/email-retry', { headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }))).status, 200);
