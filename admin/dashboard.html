@@ -25,9 +25,6 @@
       <a href="../index.html" class="btn btn-ghost btn-sm" title="View Storefront">
         <span>Storefront ↗</span>
       </a>
-      <button class="btn btn-ghost btn-sm" id="seedBtn" title="Seed 4 demo orders for preview">
-        <span>+ Demo Orders</span>
-      </button>
       <button class="btn btn-ghost btn-sm btn-danger" id="logoutBtn" title="Exit owner console">
         <span>Logout</span>
       </button>
@@ -67,9 +64,11 @@
     <div class="panel-head">
       <div>
         <h2 class="panel-title">Customer Orders</h2>
-        <p class="subtle" style="font-size: .75rem; margin-top: .2rem;">Orders saved in this browser. Connect a shared database before using across devices.</p>
+        <p id="ordersSyncStatus" role="status" class="subtle" style="font-size: .75rem; margin-top: .2rem;">Loading shared orders…</p>
       </div>
       <div class="panel-toolbar">
+        <button class="btn btn-ghost btn-sm" id="refreshOrdersBtn"><span>Refresh orders</span></button>
+        <button class="btn btn-ghost btn-sm" id="retryEmailsBtn"><span>Retry notifications</span></button>
         <div class="search-box">
           <input type="text" id="orderSearch" placeholder="Search orders, names, emails..." />
         </div>

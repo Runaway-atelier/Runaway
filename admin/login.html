@@ -23,8 +23,12 @@
 
     <form class="login-form" id="loginForm">
       <label>
-        Passcode
-        <input type="password" id="passcode" autocomplete="current-password" placeholder="Enter owner passcode" required autofocus />
+        Owner email
+        <input type="email" id="ownerEmail" autocomplete="username" placeholder="Your owner email" required />
+      </label>
+      <label>
+        Password
+        <input type="password" id="passcode" autocomplete="current-password" placeholder="Enter your password" required />
       </label>
       <div class="login-err" id="loginErr"></div>
       <button type="submit" class="btn btn-gold" id="loginBtn">
@@ -33,47 +37,12 @@
     </form>
 
     <div class="login-hint">
-      <p class="subtle">Default owner passcode: <strong class="gold">runaway2026</strong></p>
+      <p class="subtle">Sign in with your registered owner account.</p>
       <p style="margin-top: .6rem;"><a href="../index.html" class="muted" style="text-decoration: underline; font-size: .75rem;">← Return to Storefront</a></p>
     </div>
   </div>
 </div>
 
-<script>
-"use strict";
-// If already authenticated, redirect straight to dashboard
-if (sessionStorage.getItem("runaway_owner_session") === "active") {
-  window.location.replace("dashboard.html");
-}
-
-const form = document.getElementById("loginForm");
-const input = document.getElementById("passcode");
-const err = document.getElementById("loginErr");
-
-form.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const val = input.value.trim();
-  
-  // Verify passcode
-  if (val === "runaway2026" || val === "admin") {
-    err.textContent = "";
-    sessionStorage.setItem("runaway_owner_session", "active");
-    sessionStorage.setItem("runaway_owner_login_time", new Date().toISOString());
-    window.location.replace("dashboard.html");
-  } else {
-    err.textContent = "Invalid passcode. Please try again.";
-    input.value = "";
-    input.focus();
-    // Subtle shake animation
-    form.animate([
-      { transform: 'translateX(-6px)' },
-      { transform: 'translateX(6px)' },
-      { transform: 'translateX(-4px)' },
-      { transform: 'translateX(4px)' },
-      { transform: 'translateX(0)' }
-    ], { duration: 250, easing: 'ease-in-out' });
-  }
-});
-</script>
+<script src="login.js"></script>
 </body>
 </html>

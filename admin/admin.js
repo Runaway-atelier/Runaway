@@ -113,36 +113,27 @@ function getCombinedProducts() {
   return combined;
 }
 
-// ── ORDERS PERSISTENCE ──
-function loadOrders() {
-  try {
-    const raw = JSON.parse(localStorage.getItem("runaway_orders") || "[]");
-    orders = Array.isArray(raw) ? raw.map((o) => {
-      // Auto-migrate legacy test orders from earlier dollar values
-      if (o && typeof o.total === "number" && o.total < 100000) {
-        o.total = o.total * 10;
-        if (Array.isArray(o.items)) {
-          o.items.forEach((it) => {
-            if (it && typeof it.price === "number" && it.price < 100000) {
-              it.price = it.price * 10;
-            }
-          });
-        }
-      }
-      return o;
-    }) : [];
-  } catch (e) {
-    console.error("Failed to parse orders:", e);
-    orders = [];
+async function ownerFetch(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000) });
+  const data = await response.json();
+  if (response.status === 401 || response.status === 403) {
+    sessionStorage.removeItem('runaway_owner_session');
+    window.location.replace('login.html');
   }
+  if (!response.ok) throw new Error(data.error || 'Could not load shared orders.');
+  return data;
 }
-
-function saveOrders() {
-  try {
-    localStorage.setItem("runaway_orders", JSON.stringify(orders));
-  } catch (e) {
-    console.error("Failed to save orders:", e);
-  }
+async function loadSharedOrders() {
+  const data = await ownerFetch('/api/admin-orders');
+  orders = data.orders;
+  refresh(); renderTopSellers();
+  const note = $('ordersSyncStatus');
+  if (note) note.textContent = 'Paid orders synced. Last refreshed ' + new Date().toLocaleTimeString();
+}
+async function updateSharedOrder(id, changes) {
+  const data = await ownerFetch('/api/admin-orders', { method: 'PATCH', body: JSON.stringify({ id, ...changes }) });
+  orders = orders.map(order => order.id === id ? data.order : order);
+  refresh(); renderTopSellers();
 }
 
 // 4. Render Metrics
@@ -194,19 +185,17 @@ function renderOrders() {
       <tr>
         <td colspan="7">
           <div class="table-empty">
-            <p class="muted">No orders found matching criteria${query ? ` for "${query}"` : ""}.</p>
-            ${orders.length === 0 ? '<button class="btn btn-ghost btn-sm" id="emptySeedBtn"><span>Seed Sample Orders</span></button>' : ''}
+            <p class="muted">No orders found matching criteria${query ? ` for "${escapeHtml(query)}"` : ""}.</p>
           </div>
         </td>
       </tr>`;
-    $("emptySeedBtn")?.addEventListener("click", seedDemoOrders);
     return;
   }
 
   tbody.innerHTML = filtered.map((o) => {
     const statusClass = (o.status || "Pending").toLowerCase();
     const itemsSummary = (o.items || [])
-      .map((it) => `${it.qty}x ${it.name} (${it.size || "M"}${it.colorName ? " · " + it.colorName : ""})`)
+      .map((it) => `${Number(it.qty)}x ${escapeHtml(it.name)} (${escapeHtml(it.size || "M")}${it.colorName ? " · " + escapeHtml(it.colorName) : ""})`)
       .join("<br />");
 
     const toggleActionText = o.status === "Fulfilled" ? "Mark Pending" : "Mark Fulfilled";
@@ -220,8 +209,8 @@ function renderOrders() {
           </button>
         </td>
         <td>
-          <div style="font-weight: 500;">${o.customer?.name || "Anonymous Runner"}</div>
-          <div class="subtle" style="font-size: .75rem;">${o.customer?.email || "—"}</div>
+          <div style="font-weight: 500;">${escapeHtml(o.customer?.name || "Anonymous Runner")}</div>
+          <div class="subtle" style="font-size: .75rem;">${escapeHtml(o.customer?.email || "—")}</div>
         </td>
         <td style="font-size: .8rem; line-height: 1.4;">${itemsSummary || "—"}</td>
         <td class="tabular"><strong class="gold">${formatMoney(o.total)}</strong></td>
@@ -237,9 +226,6 @@ function renderOrders() {
             </button>
             <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${o.id}" data-target="${toggleTargetStatus}">
               <span>${toggleActionText}</span>
-            </button>
-            <button class="btn btn-danger btn-sm" data-action="delete" data-id="${o.id}" title="Delete order">
-              <span>✕</span>
             </button>
           </div>
         </td>
@@ -380,8 +366,8 @@ function openOrderDetail(orderId) {
     return `
       <tr>
         <td>
-          <strong>${it.name}</strong>
-          <div class="subtle" style="font-size: .72rem;">${it.colorName ? it.colorName + " · " : ""}Size: ${it.size || "M"}</div>
+          <strong>${escapeHtml(it.name)}</strong>
+          <div class="subtle" style="font-size: .72rem;">${it.colorName ? escapeHtml(it.colorName) + " · " : ""}Size: ${escapeHtml(it.size || "M")}</div>
         </td>
         <td style="text-align: center;">${it.qty || 1}</td>
         <td class="tabular" style="text-align: right;">${formatMoney(it.price)}</td>
@@ -396,14 +382,14 @@ function openOrderDetail(orderId) {
     <div class="slip-meta-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
       <div>
         <span class="slip-field-label">Customer Details</span>
-        <div class="slip-field-val">${order.customer?.name || "Anonymous Runner"}</div>
-        <div class="subtle" style="font-size: .75rem;">${order.customer?.email || "—"}</div>
-        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">Phone: ${order.customer?.phone || "No phone provided"}</div>
+        <div class="slip-field-val">${escapeHtml(order.customer?.name || "Anonymous Runner")}</div>
+        <div class="subtle" style="font-size: .75rem;">${escapeHtml(order.customer?.email || "—")}</div>
+        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">Phone: ${escapeHtml(order.customer?.phone || "No phone provided")}</div>
       </div>
       <div>
         <span class="slip-field-label">Delivery Coordinates</span>
-        <div class="slip-field-val" style="font-size:.85rem;line-height:1.35;">${order.customer?.address || "Address on file"}</div>
-        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">${order.customer?.city ? order.customer.city + ", " : ""}${order.customer?.state || "Lagos, Nigeria"}</div>
+        <div class="slip-field-val" style="font-size:.85rem;line-height:1.35;">${escapeHtml(order.customer?.address || "Address on file")}</div>
+        <div class="subtle" style="font-size: .75rem; margin-top: .2rem;">${order.customer?.city ? escapeHtml(order.customer.city) + ", " : ""}${escapeHtml(order.customer?.state || "Lagos, Nigeria")}</div>
       </div>
       <div>
         <span class="slip-field-label">Dispatch Status</span>
@@ -412,13 +398,13 @@ function openOrderDetail(orderId) {
         </div>
         <div class="order-operations-grid">
           <label>Payment
-            <select data-order-field="paymentStatus" data-order-id="${order.id}">
+            <select disabled aria-label="Verified payment status" data-order-field="paymentStatus" data-order-id="${order.id}">
               ${["Unpaid", "Paid", "Refunded"].map((status) => `<option ${((order.paymentStatus || "Unpaid") === status) ? "selected" : ""}>${status}</option>`).join("")}
             </select>
           </label>
           <label>Fulfillment
             <select data-order-field="fulfillmentStatus" data-order-id="${order.id}">
-              ${["Pending", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => `<option ${((order.fulfillmentStatus || (order.status === "Fulfilled" ? "Shipped" : order.status || "Pending")) === status) ? "selected" : ""}>${status}</option>`).join("")}
+              ${["Pending", "Packing", "Shipped", "Delivered", "Cancelled"].map((status) => `<option ${((order.fulfillmentStatus || (order.status === "Fulfilled" ? "Shipped" : order.status || "Pending")) === status) ? "selected" : ""}>${status}</option>`).join("")}
             </select>
           </label>
           <label>Carrier<input data-order-field="carrier" data-order-id="${escapeHtml(order.id)}" value="${escapeHtml(order.carrier || "")}" placeholder="Courier" /></label>
@@ -1084,68 +1070,6 @@ function setupAnnouncementControl() {
   });
 }
 
-// 12. Seed Demo Orders Helper
-function seedDemoOrders() {
-  const sampleOrders = [
-    {
-      id: "RW-1048",
-      date: new Date(Date.now() - 1000 * 60 * 32).toISOString(),
-      customer: { name: "Marcus Vance", email: "marcus.v@nightmiles.cc" },
-      items: [
-        { name: "Aether Compression Tee", qty: 1, size: "L", colorName: "Eclipse", price: 148000 },
-        { name: "Apex Training Shorts", qty: 1, size: "M", colorName: "Void", price: 98000 }
-      ],
-      total: 246000,
-      status: "Pending"
-    },
-    {
-      id: "RW-1047",
-      date: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
-      customer: { name: "Elena Rostova", email: "elena@stridepace.io" },
-      items: [
-        { name: "Velocity Skull Cap", qty: 2, size: "S/M", colorName: "Black / Gold", price: 42000 }
-      ],
-      total: 84000,
-      status: "Fulfilled"
-    },
-    {
-      id: "RW-1046",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-      customer: { name: "Devon Reed", email: "devon.reed@apexclub.org" },
-      items: [
-        { name: "Aether Compression Tee", qty: 1, size: "XL", colorName: "Eclipse", price: 148000 }
-      ],
-      total: 148000,
-      status: "Fulfilled"
-    },
-    {
-      id: "RW-1045",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 28).toISOString(),
-      customer: { name: "Sophia Zhang", email: "sophia.zh@tempo.com" },
-      items: [
-        { name: "Apex Training Shorts", qty: 2, size: "S", colorName: "Void", price: 98000 },
-        { name: "Velocity Skull Cap", qty: 1, size: "S/M", colorName: "All Black", price: 42000 }
-      ],
-      total: 238000,
-      status: "Pending"
-    }
-  ];
-
-  orders = [...sampleOrders, ...orders];
-  saveOrders();
-  refresh();
-  renderTopSellers();
-}
-
-function clearAllOrders() {
-  if (confirm("Are you sure you want to clear all orders? This cannot be undone.")) {
-    orders = [];
-    saveOrders();
-    refresh();
-    renderTopSellers();
-  }
-}
-
 // 13. Event Delegation & Listeners
 function setupEvents() {
   // Instant tactile feedback on pointer-down
@@ -1182,27 +1106,21 @@ function setupEvents() {
   // Export CSV
   $("exportCsvBtn")?.addEventListener("click", exportOrdersToCSV);
 
-  $("slipBody")?.addEventListener("change", (e) => {
+  $("slipBody")?.addEventListener("change", async (e) => {
     const field = e.target.closest("[data-order-field]");
     if (!field) return;
     const order = orders.find((item) => item.id === field.dataset.orderId);
     if (!order) return;
     const key = field.dataset.orderField;
-    order[key] = field.value.trim();
-    if (key === "fulfillmentStatus") {
-      order.status = field.value === "Cancelled" ? "Cancelled" : ["Shipped", "Delivered"].includes(field.value) ? "Fulfilled" : "Pending";
-    }
-    order.updatedAt = new Date().toISOString();
-    saveOrders();
-    refresh();
-    renderTopSellers();
+    field.disabled = true;
+    try { await updateSharedOrder(order.id, { [key]: field.value.trim() }); }
+    catch (error) { alert(error.message); }
     openOrderDetail(order.id);
   });
 
-  // Table action clicks (Toggle status / Delete / View Slip)
-  $("ordersTableBody")?.addEventListener("click", (e) => {
+  // Table action clicks (fulfillment status and packing slip)
+  $("ordersTableBody")?.addEventListener("click", async (e) => {
     const toggleBtn = e.target.closest('[data-action="toggle"]');
-    const deleteBtn = e.target.closest('[data-action="delete"]');
     const slipBtn = e.target.closest('[data-action="view-slip"]');
 
     if (slipBtn) {
@@ -1216,25 +1134,14 @@ function setupEvents() {
       const targetStatus = toggleBtn.dataset.target;
       const order = orders.find((o) => o.id === id);
       if (order) {
-        order.status = targetStatus;
-        order.fulfillmentStatus = targetStatus === "Fulfilled" ? "Shipped" : "Pending";
-        saveOrders();
-        refresh();
-        renderTopSellers();
+        toggleBtn.disabled = true;
+        try { await updateSharedOrder(id, { fulfillmentStatus: targetStatus === "Fulfilled" ? "Shipped" : "Pending" }); }
+        catch (error) { alert(error.message); toggleBtn.disabled = false; }
       }
       return;
     }
 
-    if (deleteBtn) {
-      const id = deleteBtn.dataset.id;
-      if (confirm(`Remove order ${id}?`)) {
-        orders = orders.filter((o) => o.id !== id);
-        saveOrders();
-        refresh();
-        renderTopSellers();
-      }
-      return;
-    }
+
   });
 
   // Inventory grid actions (Preview Piece, Edit Piece, & Delete Piece)
@@ -1263,11 +1170,11 @@ function setupEvents() {
 
   // Action buttons
   $("restoreCoreBtn")?.addEventListener("click", restoreCoreCatalogue);
-  $("seedBtn")?.addEventListener("click", seedDemoOrders);
-  $("clearBtn")?.addEventListener("click", clearAllOrders);
 
   // Logout button
-  $("logoutBtn")?.addEventListener("click", () => {
+  $("logoutBtn")?.addEventListener("click", async () => {
+    try { await ownerFetch('/api/admin-session', { method: 'DELETE' }); }
+    catch (error) { alert(error.message); return; }
     sessionStorage.removeItem("runaway_owner_session");
     sessionStorage.removeItem("runaway_owner_login_time");
     window.location.replace("login.html");
@@ -1280,10 +1187,10 @@ function refresh() {
 }
 
 // Initialize
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   loadCustomProducts();
   loadDeletedSlugs();
-  loadOrders();
+  orders = [];
   setupEvents();
   setupProductUpload();
   setupAnnouncementControl();
@@ -1291,17 +1198,23 @@ document.addEventListener("DOMContentLoaded", () => {
   renderOrders();
   renderInventory();
   renderTopSellers();
+  $('refreshOrdersBtn')?.addEventListener('click', () => loadSharedOrders().catch(error => { $('ordersSyncStatus').textContent = error.message; }));
+  $('retryEmailsBtn')?.addEventListener('click', async () => {
+    const button = $('retryEmailsBtn'); button.disabled = true;
+    try {
+      const result = await ownerFetch('/api/admin-emails', { method: 'POST' });
+      $('ordersSyncStatus').textContent = `${result.sent} notification(s) accepted; ${result.processed} job(s) processed.`;
+    } catch (error) { $('ordersSyncStatus').textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  try { await loadSharedOrders(); }
+  catch (error) { $('ordersSyncStatus').textContent = error.message; }
 });
 
 window.addEventListener("storage", (event) => {
   if (event.key === "runaway_custom_products") {
     loadCustomProducts();
     renderInventory();
-  }
-  if (event.key === "runaway_orders") {
-    loadOrders();
-    refresh();
-    renderTopSellers();
   }
 });
 

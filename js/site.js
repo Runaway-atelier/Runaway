@@ -318,7 +318,7 @@ function paintBag() {
         <p class="muted small" style="margin-top:.6rem;line-height:1.5;">
           Thank you, <b>${esc(coName)}</b>. Your order has been placed into our atelier dispatch queue.
         </p>
-        <p class="small" style="margin-top:.7rem;line-height:1.5;">${lastOrderEmailSent ? `A confirmation was sent to <b>${esc(coEmail)}</b>.` : `We could not send the confirmation email to <b>${esc(coEmail)}</b>. Keep your order ID handy if you need help.`}</p>
+        <p class="small" style="margin-top:.7rem;line-height:1.5;">${lastOrderEmailSent ? `Your receipt is queued for <b>${esc(coEmail)}</b>.` : `Keep your order ID handy if you need help with your receipt.`}</p>
         <div style="margin-top:1rem;padding:.9rem;background:var(--surface);border:1px solid var(--line);border-radius:2px;text-align:left;font-size:.82rem;">
           <div style="display:flex;justify-content:space-between;margin-bottom:.4rem;">
             <span class="subtle">Destination</span>
@@ -366,7 +366,7 @@ function paintBag() {
             </select>
           </label>
         </div>
-        <p class="form-err" id="coErr" style="color:#ef4444;font-size:.75rem;min-height:1rem;">${paymentCallbackStatus}</p>
+        <p class="form-err" id="coErr" style="color:#ef4444;font-size:.75rem;min-height:1rem;">${esc(paymentCallbackStatus)}</p>
         <div style="padding:.7rem .8rem;background:var(--surface);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
           <span class="small subtle">Nationwide Courier:</span>
           <span class="small gold"><b>FREE (₦0)</b></span>
@@ -425,7 +425,7 @@ function paintBag() {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.ok || !result.authorizationUrl) throw new Error(result.error || "Could not start payment.");
-        sessionStorage.setItem("runaway_pending_payment", JSON.stringify({ reference: result.reference, orderId: result.orderId }));
+        try { sessionStorage.setItem("runaway_pending_payment", JSON.stringify({ reference: result.reference, orderId: result.orderId })); } catch {}
         window.location.assign(result.authorizationUrl);
       } catch (error) {
         $("coErr").textContent = error.message && !error.message.includes("JSON") ? error.message : "Payment service is unavailable here. Run the site with Vercel Dev and configure PAYSTACK_SECRET_KEY.";
@@ -481,17 +481,10 @@ async function handlePaymentReturn() {
   const reference = params.get("reference") || params.get("trxref");
   if (!reference) return;
   const pending = (() => { try { return JSON.parse(sessionStorage.getItem("runaway_pending_payment") || "null"); } catch { return null; } })();
-  if (!pending || pending.reference !== reference) {
-    paymentCallbackStatus = "We could not match this payment to your checkout. Contact RUNAWAY support with your payment reference.";
-    step = "checkout";
-    openDrawer();
-    paintBag();
-    return;
-  }
 
   paymentCallbackStatus = "Checking your payment securely…";
-  step = "checkout";
   openDrawer();
+  step = "checkout";
   paintBag();
   try {
     const response = await fetch("/api/order-payment", {
@@ -509,8 +502,9 @@ async function handlePaymentReturn() {
     }
 
     const order = result.order;
-    if (order.id !== pending.orderId) throw new Error("Payment reference did not match this order.");
+    if (pending?.reference === reference && order.id !== pending.orderId) throw new Error("Payment reference did not match this order.");
     history.replaceState({}, "", `${location.pathname}${location.hash}`);
+    try {
     let orders = [];
     try { orders = JSON.parse(localStorage.getItem("runaway_orders") || "[]"); } catch {}
     if (!orders.some((entry) => entry.id === order.id)) {
@@ -528,6 +522,7 @@ async function handlePaymentReturn() {
       if (stockChanged) localStorage.setItem("runaway_custom_products", JSON.stringify(products));
     }
 
+    } catch { /* Browser storage is optional; the server has already saved the order. */ }
     coName = order.customer.name;
     coEmail = order.customer.email;
     coPhone = order.customer.phone;
@@ -535,18 +530,8 @@ async function handlePaymentReturn() {
     coCity = order.customer.city;
     coState = order.customer.state;
     lastOrderId = order.id;
-    lastOrderEmailSent = false;
-    try {
-      const emailResponse = await fetch("/api/order-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...order, type: "order" }),
-        signal: AbortSignal.timeout(10000),
-      });
-      const emailResult = await emailResponse.json();
-      lastOrderEmailSent = emailResponse.ok && emailResult.customerEmailSent === true;
-    } catch {}
-    sessionStorage.removeItem("runaway_pending_payment");
+    lastOrderEmailSent = result.emailQueued === true;
+    try { sessionStorage.removeItem("runaway_pending_payment"); } catch {}
     Cart.clear();
     paymentCallbackStatus = "";
     step = "done";
