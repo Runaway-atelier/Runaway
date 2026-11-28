@@ -14,6 +14,7 @@ import { validateCart } from '../lib/catalog.mjs';
 import { paystackSignature, resendSignature } from '../lib/signatures.mjs';
 import { readJson } from '../lib/http.mjs';
 import { sendOutbox } from '../lib/outbox.mjs';
+import { settlePayment } from '../lib/payments.mjs';
 import { GET as shop } from '../api/shop.mjs';
 import { GET as adminCatalog, POST as saveCatalog } from '../api/admin-catalog.mjs';
 import { GET as getCart, POST as saveCart } from '../api/cart.mjs';
@@ -161,6 +162,29 @@ test('simultaneous settlement and workers retain exactly two jobs', async () => 
   await Promise.all([webhook(signedEvent(reference)), checkout(request('/api/order-payment', { action: 'verify', reference }))]); await drain();
   await Promise.all([sendOutbox(), sendOutbox()]);
   assert.equal(await count('shop_email_outbox'), 2); assert.equal(sends.size, 2);
+});
+test('a payment sends its notifications even when an older order is waiting', async () => {
+  const older = await beginPayment();
+  await settlePayment(older.reference);
+  await database.exec("update public.shop_email_outbox set next_attempt_at=now()-interval '1 hour'");
+  const current = await beginPayment();
+  transactions.get(current.reference).id = 'current-transaction';
+  assert.equal((await webhook(signedEvent(current.reference))).status, 200);
+  await drain();
+  assert.equal(sends.size, 4);
+  assert.equal(Number((await database.query("select count(*) as n from public.shop_email_outbox where state='sent'")).rows[0].n), 4);
+  await sendOutbox();
+  assert.equal(sends.size, 4, 'another worker must not duplicate accepted messages');
+});
+test('a worker bounds backlog processing and leaves remaining jobs for the scheduler', async () => {
+  for (let i = 0; i < 4; i++) {
+    const order = await beginPayment();
+    transactions.get(order.reference).id = `backlog-${i}`;
+    await settlePayment(order.reference);
+  }
+  assert.deepEqual(await sendOutbox(), { processed: 6, sent: 6 });
+  assert.deepEqual(await sendOutbox(), { processed: 2, sent: 2 });
+  assert.equal(sends.size, 8);
 });
 test('wrong amount, currency, reference, order, customer or environment cannot settle', async () => {
   const { reference } = await beginPayment(); const original = transactions.get(reference);

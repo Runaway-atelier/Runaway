@@ -46,7 +46,7 @@ GET https://YOUR_DOMAIN/api/email-retry
 Authorization: Bearer YOUR_CRON_SECRET
 ```
 
-Generate `CRON_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and store it only in server/scheduler settings. Run every minute (two jobs per invocation); increase worker capacity deliberately as order volume grows.
+Generate `CRON_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and store it only in server/scheduler settings. Run every minute (up to six jobs per invocation, claimed in pairs with a time limit); increase worker capacity deliberately as order volume grows.
 
 For **Vercel Pro**, add this top-level property to `vercel.json`; Vercel sends `CRON_SECRET` automatically:
 

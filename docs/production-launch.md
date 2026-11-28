@@ -38,7 +38,7 @@ Run the generated `scratch/supabase-scheduler.sql` in this project's Supabase SQ
 
 Inspect Cron history and the corresponding `net._http_response` result. A successful cron invocation only proves an HTTP request was queued; the website's HTTP response must also succeed. Confirm a recoverable receipt failure is retried without a browser. The database HTTP queue temporarily contains the authorization header, so limit database login access to trusted operators.
 
-Each invocation handles two jobs; monitor the backlog before increasing capacity. Ambiguous sends older than 23 hours enter `review`. Never reset their first-attempt timestamp or blindly retry them outside the provider's deduplication window.
+Each invocation claims two jobs at a time and handles up to three batches (six jobs). It stops starting batches after ten seconds to leave time for in-flight requests within the function timeout. This allows a new order's notifications to follow older queued jobs in the same run. The scheduler remains required for retries and larger backlogs. Ambiguous sends older than 23 hours enter `review`. Never reset their first-attempt timestamp or blindly retry them outside the provider's deduplication window.
 
 ## Acceptance and live activation
 
