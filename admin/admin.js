@@ -3,10 +3,16 @@
    ══════════════════════════════════════════════ */
 "use strict";
 
-// 1. Auth Guard: immediately enforce session protection
-if (sessionStorage.getItem("runaway_owner_session") !== "active") {
-  window.location.replace("login.html");
-}
+// Validate the server cookie; browser storage may be disabled or empty in a new tab.
+const ownerSessionReady = fetch('/api/admin-session', { signal: AbortSignal.timeout(15000) }).then(response => {
+  if (response.status === 401 || response.status === 403) { window.location.replace('login.html'); return false; }
+  if (!response.ok) throw new Error('Unable to verify your owner session. Refresh to try again.');
+  return true;
+}).catch(() => {
+  const status = document.getElementById('ordersSyncStatus');
+  if (status) status.textContent = 'Unable to verify your owner session. Refresh to try again.';
+  return false;
+});
 
 // 2. Helpers
 const $ = (id) => document.getElementById(id);
@@ -49,75 +55,42 @@ let orders = [];
 let customProducts = [];
 let deletedSlugs = [];
 let currentUploadImage = "../public/images/tee-front.jpg";
+let editingProductSnapshot = null;
 
-// ── CUSTOM PRODUCTS PERSISTENCE ──
-function loadCustomProducts() {
-  try {
-    const raw = localStorage.getItem("runaway_custom_products");
-    customProducts = raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error("Failed to parse custom products:", e);
-    customProducts = [];
-  }
+let catalogueReady = false;
+function applySharedCatalogue(data) {
+  customProducts = [...data.products, ...data.hiddenProducts];
+  deletedSlugs = data.hiddenProducts.map(p => p.slug);
+  catalogueReady = true;
+  if ($('announceInput')) $('announceInput').value = data.announcement || '';
+  if ($('announcePreview')) $('announcePreview').textContent = data.announcement || 'Your announcement will appear here.';
+  renderInventory(); renderTopSellers();
 }
-
-function saveCustomProducts() {
-  try {
-    localStorage.setItem("runaway_custom_products", JSON.stringify(customProducts));
-  } catch (e) {
-    console.error("Failed to save custom products:", e);
-  }
+async function loadSharedCatalogue() { applySharedCatalogue(await ownerFetch('/api/admin-catalog')); }
+async function catalogueAction(body) {
+  if (!catalogueReady) throw new Error('Wait until the shared catalogue has loaded.');
+  const data = await ownerFetch('/api/admin-catalog', { method: 'POST', body: JSON.stringify(body) });
+  applySharedCatalogue(data);
 }
-
-// ── DELETED SLUGS PERSISTENCE ──
-function loadDeletedSlugs() {
-  try {
-    const raw = localStorage.getItem("runaway_deleted_slugs");
-    deletedSlugs = raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error("Failed to parse deleted slugs:", e);
-    deletedSlugs = [];
-  }
+function productForSave(product) {
+  const { image, ...data } = product;
+  return { ...data, images: product.images?.length ? product.images : image ? [image] : [] };
 }
-
-function saveDeletedSlugs() {
-  try {
-    localStorage.setItem("runaway_deleted_slugs", JSON.stringify(deletedSlugs));
-  } catch (e) {
-    console.error("Failed to save deleted slugs:", e);
-  }
+async function saveCustomProducts(product, expected) {
+  try { await catalogueAction({ action: 'save', product: productForSave(product), ...(expected ? { expected } : {}) }); return true; }
+  catch (error) { await loadSharedCatalogue().catch(() => {}); alert(error.message); return false; }
 }
 
 function getCombinedProducts() {
-  const base = typeof PRODUCTS !== "undefined" && Array.isArray(PRODUCTS) ? PRODUCTS : [];
-  const deletedSet = new Set(deletedSlugs);
-  const customMap = new Map(customProducts.map((p) => [p.slug, p]));
-  const combined = [];
-
-  for (const p of base) {
-    if (deletedSet.has(p.slug)) continue;
-    if (customMap.has(p.slug)) {
-      combined.push(customMap.get(p.slug));
-      customMap.delete(p.slug);
-    } else {
-      combined.push(p);
-    }
-  }
-
-  for (const p of customMap.values()) {
-    if (!deletedSet.has(p.slug)) {
-      combined.push(p);
-    }
-  }
-
-  return combined;
+  const hidden = new Set(deletedSlugs);
+  return catalogueReady ? customProducts.filter(p => !hidden.has(p.slug)) : [];
 }
 
 async function ownerFetch(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000) });
   const data = await response.json();
   if (response.status === 401 || response.status === 403) {
-    sessionStorage.removeItem('runaway_owner_session');
+    try { sessionStorage.removeItem('runaway_owner_session'); } catch {}
     window.location.replace('login.html');
   }
   if (!response.ok) throw new Error(data.error || 'Could not load shared orders.');
@@ -128,7 +101,7 @@ async function loadSharedOrders() {
   orders = data.orders;
   refresh(); renderTopSellers();
   const note = $('ordersSyncStatus');
-  if (note) note.textContent = 'Paid orders synced. Last refreshed ' + new Date().toLocaleTimeString();
+  if (note) note.textContent = `${data.environment === 'test' ? 'TEST MODE — simulated orders and test stock.' : 'LIVE MODE — real orders and stock.'} Last refreshed ` + new Date().toLocaleTimeString();
 }
 async function updateSharedOrder(id, changes) {
   const data = await ownerFetch('/api/admin-orders', { method: 'PATCH', body: JSON.stringify({ id, ...changes }) });
@@ -234,6 +207,7 @@ function renderOrders() {
 }
 
 function getAdminStorefrontUrl(p) {
+  if (p.file?.startsWith('/') && !p.file.startsWith('//')) return p.file;
   if (p.file) {
     // Normalize relative prefix so it always points exactly 1 level up from admin/
     const clean = p.file.replace(/^(\.\.\/|\.\/)/, "");
@@ -265,7 +239,7 @@ function renderInventory() {
     const isCustom = Boolean(p.isCustom);
     const storefrontUrl = getAdminStorefrontUrl(p);
     const stockTracked = p.stock !== undefined && p.stock !== null && Number.isFinite(Number(p.stock));
-    const stockCount = stockTracked ? Math.max(0, Number(p.stock)) : null;
+    const stockCount = stockTracked ? Number(p.stock) : null;
 
     return `
       <div class="inv-card">
@@ -275,7 +249,7 @@ function renderInventory() {
           <span class="inv-cat">${p.category}</span>
           <h4 class="inv-name">${p.name}</h4>
           <span class="inv-price tabular">${formatMoney(p.price)}</span>
-          <p class="inventory-stock ${stockTracked && stockCount <= Number(p.lowStockThreshold ?? 3) ? "is-low" : ""}">${stockTracked ? `${stockCount} in stock${stockCount <= Number(p.lowStockThreshold ?? 3) ? " · Low stock" : ""}` : "Stock not set"}</p>
+          <p class="inventory-stock ${stockTracked && stockCount <= Number(p.lowStockThreshold ?? 3) ? "is-low" : ""}">${stockTracked ? stockCount < 0 ? `${Math.abs(stockCount)} short · Reconcile paid orders` : `${stockCount} available${stockCount <= Number(p.lowStockThreshold ?? 3) ? " · Low stock" : ""}` : "Stock not set"}</p>
           <p class="subtle inventory-sku">SKU: ${escapeHtml(p.sku || "Not set")}</p>
           <p class="subtle" style="font-size: .72rem; margin-top: .3rem;">${sizesList}</p>
           <p class="subtle" style="font-size: .72rem;">Colors: ${colorsList}</p>
@@ -601,6 +575,12 @@ function closePiecePreview() {
 }
 
 // 9. CSV Export Feature
+function csvCell(value) {
+  let text = String(value ?? '');
+  // Keep formula-like input as text when this human-facing export is opened in Excel.
+  if (/^[\s\uFEFF]*[=+\-@＝＋－＠]/u.test(text) || /^[\t\r\n]/.test(text)) text = '\t' + text;
+  return '"' + text.replace(/"/g, '""') + '"';
+}
 function exportOrdersToCSV() {
   if (orders.length === 0) {
     alert("No orders available to export.");
@@ -614,25 +594,15 @@ function exportOrdersToCSV() {
       .join("; ");
 
     return [
-      `"${o.id || ""}"`,
-      `"${o.date || ""}"`,
-      `"${(o.customer?.name || "").replace(/"/g, '""')}"`,
-      `"${(o.customer?.email || "").replace(/"/g, '""')}"`,
-      `"${(o.customer?.phone || "").replace(/"/g, '""')}"`,
-      `"${(o.customer?.address || "").replace(/"/g, '""')}"`,
-      `"${(o.customer?.city || "").replace(/"/g, '""')}"`,
-      `"${(o.customer?.state || "").replace(/"/g, '""')}"`,
-      `"${o.fulfillmentStatus || (o.status === "Fulfilled" ? "Shipped" : o.status || "Pending")}"`,
-      `"${o.paymentStatus || "Unpaid"}"`,
-      `"${(o.carrier || "").replace(/"/g, '""')}"`,
-      `"${(o.trackingNumber || "").replace(/"/g, '""')}"`,
-      `"${o.total || 0}"`,
-      `"${(o.items || []).length}"`,
-      `"${itemsDetail.replace(/"/g, '""')}"`
-    ].join(",");
+      o.id || '', o.date || '', o.customer?.name || '', o.customer?.email || '',
+      o.customer?.phone || '', o.customer?.address || '', o.customer?.city || '', o.customer?.state || '',
+      o.fulfillmentStatus || (o.status === 'Fulfilled' ? 'Shipped' : o.status || 'Pending'),
+      o.paymentStatus || 'Unpaid', o.carrier || '', o.trackingNumber || '', o.total || 0,
+      (o.items || []).length, itemsDetail,
+    ].map(csvCell).join(",");
   });
 
-  const csvContent = [headers.join(","), ...rows].join("\r\n");
+  const csvContent = [headers.map(csvCell).join(","), ...rows].join("\r\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -646,7 +616,7 @@ function exportOrdersToCSV() {
 }
 
 // 10. Product CRUD Operations (Upload, Edit, Delete)
-function deleteProduct(slug) {
+async function deleteProduct(slug) {
   const all = getCombinedProducts();
   const p = all.find((item) => item.slug === slug) || 
     (typeof PRODUCTS !== "undefined" ? PRODUCTS.find((item) => item.slug === slug) : null) ||
@@ -657,24 +627,15 @@ function deleteProduct(slug) {
     return;
   }
 
-  const isCustom = customProducts.some((item) => item.slug === slug);
-  if (isCustom) {
-    customProducts = customProducts.filter((item) => item.slug !== slug);
-    saveCustomProducts();
-  }
-
-  // Record in deletedSlugs so both core products and any remnants are permanently filtered out
-  if (!deletedSlugs.includes(slug)) {
-    deletedSlugs.push(slug);
-    saveDeletedSlugs();
-  }
+  try { await catalogueAction({ action: 'hide', slug }); }
+  catch (error) { alert(error.message); return; }
 
   closePiecePreview();
   renderInventory();
   renderTopSellers();
 }
 
-function restoreCoreCatalogue() {
+async function restoreCoreCatalogue() {
   if (deletedSlugs.length === 0) {
     alert("Core catalogue is already intact. No hidden pieces to restore.");
     return;
@@ -682,16 +643,23 @@ function restoreCoreCatalogue() {
   if (!confirm(`Restore ${deletedSlugs.length} hidden catalogue piece(s) back to your storefront inventory?`)) {
     return;
   }
-  deletedSlugs = [];
-  saveDeletedSlugs();
+  try { for (const slug of [...deletedSlugs]) await catalogueAction({ action: 'restore', slug }); }
+  catch (error) { alert(error.message); return; }
   renderInventory();
   renderTopSellers();
   alert("Core catalogue restored! All standard collection pieces are now visible.");
 }
 
+function renderProductSizes(selected = ['S', 'M', 'L']) {
+  const container = $('productSizes');
+  if (!container) return;
+  const sizes = [...new Set(['XS', 'S', 'M', 'L', 'XL', 'XXL', 'S/M', 'L/XL', ...selected])];
+  container.innerHTML = sizes.map(size => `<label><input type="checkbox" name="sizes" value="${escapeHtml(size)}" ${selected.includes(size) ? 'checked' : ''} /> ${escapeHtml(size)}</label>`).join('');
+}
 function openEditProduct(slug) {
   const p = getCombinedProducts().find((item) => item.slug === slug);
   if (!p) return;
+  editingProductSnapshot = { updatedAt: p.updatedAt, stock: p.stock ?? null };
 
   closePiecePreview();
 
@@ -715,7 +683,7 @@ function openEditProduct(slug) {
   if ($("pCategory")) $("pCategory").value = p.category || "Tops";
   if ($("pPrice")) $("pPrice").value = p.price || "";
   if ($("pSku")) $("pSku").value = p.sku || "";
-  if ($("pStock")) $("pStock").value = Number(p.stock || 0);
+  if ($("pStock")) $("pStock").value = p.stock == null ? '' : Math.max(0, Number(p.stock));
   if ($("pLowStock")) $("pLowStock").value = Number(p.lowStockThreshold ?? 3);
   if ($("pTagline")) $("pTagline").value = p.tagline || "";
   if ($("pDesc")) $("pDesc").value = p.description || p.story || "";
@@ -729,10 +697,7 @@ function openEditProduct(slug) {
   if ($("pColorHexText")) $("pColorHexText").value = colorHex;
 
   // Sizes
-  const sizesSet = new Set(p.sizes || []);
-  document.querySelectorAll('input[name="sizes"]').forEach((cb) => {
-    cb.checked = sizesSet.has(cb.value);
-  });
+  renderProductSizes(p.sizes || []);
 
   // Specs
   if ($("pFabric")) $("pFabric").value = p.fabric || p.specs?.fabric || "";
@@ -757,6 +722,7 @@ function openEditProduct(slug) {
 }
 
 function resetProductFormForCreate() {
+  editingProductSnapshot = null;
   const form = $("productForm");
   const modalTitle = $("productModalTitle");
   const modalSub = $("productModalSub");
@@ -780,9 +746,7 @@ function resetProductFormForCreate() {
   document.querySelectorAll(".preset-btn").forEach((b, i) => b.classList.toggle("active", i === 0));
 
   // Reset checkboxes to default S, M, L
-  document.querySelectorAll('input[name="sizes"]').forEach((cb) => {
-    cb.checked = ["S", "M", "L"].includes(cb.value);
-  });
+  renderProductSizes();
 }
 
 function openProductModal() {
@@ -862,6 +826,7 @@ function setupProductUpload() {
   }
 
   function processUploadedImage(file) {
+    if (file.size > 1000000) { alert('Use an image smaller than 1 MB.'); return; }
     if (!file.type.startsWith("image/")) {
       alert("Please upload a valid image file (PNG, JPG, WebP).");
       return;
@@ -878,15 +843,17 @@ function setupProductUpload() {
 
   // Form submit (Handles both Create and Edit)
   if (productForm) {
-    productForm.addEventListener("submit", (e) => {
+    productForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (!catalogueReady) { alert('The shared catalogue is not available yet.'); return; }
 
       const editingSlug = $("pEditingSlug")?.value?.trim();
       const name = $("pName")?.value?.trim();
       const category = $("pCategory")?.value;
       const price = Number($("pPrice")?.value);
       const sku = $("pSku")?.value?.trim().toUpperCase() || "";
-      const stock = Math.max(0, Number.parseInt($("pStock")?.value || "0", 10) || 0);
+      const stockValue = $('pStock')?.value?.trim() || '';
+      const stock = stockValue === '' ? null : Math.max(0, Number.parseInt(stockValue, 10) || 0);
       const lowStockThreshold = Math.max(0, Number.parseInt($("pLowStock")?.value || "3", 10) || 0);
       const tagline = $("pTagline")?.value?.trim();
       const desc = $("pDesc")?.value?.trim();
@@ -903,6 +870,7 @@ function setupProductUpload() {
         alert("Please provide piece name and price.");
         return;
       }
+      if (!checkedSizes.length) { alert('Choose at least one available size.'); return; }
 
       if (editingSlug) {
         // ── EDIT MODE ──
@@ -927,10 +895,10 @@ function setupProductUpload() {
         target.lowStockThreshold = lowStockThreshold;
         target.tagline = tagline || target.tagline || "Engineered Performance Kit Piece";
         target.description = desc || target.description || "Engineered stretch fabric cut for high-heat, high-speed night runs.";
-        target.image = currentUploadImage;
-        target.images = [currentUploadImage];
-        target.colors = [{ name: colorName, hex: colorHexVal, swatch: colorHexVal }];
-        target.sizes = checkedSizes.length > 0 ? checkedSizes : ["S", "M", "L"];
+        delete target.image;
+        target.images = [currentUploadImage, ...(target.images || []).slice(1)];
+        target.colors = [{ ...(target.colors?.[0] || {}), id: target.colors?.[0]?.id || slugify(colorName), name: colorName, swatch: colorHexVal }, ...(target.colors || []).slice(1)];
+        target.sizes = checkedSizes;
         target.fabric = fabric || target.fabric || "4-way technical stretch woven shell";
         target.fit = fit || target.fit || "Athletic tailored cut. True to size.";
         target.details = [
@@ -946,9 +914,7 @@ function setupProductUpload() {
           care: target.specs?.care || "Machine wash cold 30°C. Do not tumble dry."
         };
         target.isCustom = true;
-        target.updatedAt = new Date().toISOString();
-
-        saveCustomProducts();
+        if (!await saveCustomProducts(target, editingProductSnapshot)) return;
         closeProductModal();
         renderInventory();
         renderTopSellers();
@@ -969,10 +935,9 @@ function setupProductUpload() {
           lowStockThreshold,
           tagline: tagline || "Engineered Performance Kit Piece",
           description: desc || "Engineered stretch fabric cut for high-heat, high-speed night runs.",
-          image: currentUploadImage,
           images: [currentUploadImage],
-          colors: [{ name: colorName, hex: colorHexVal, swatch: colorHexVal }],
-          sizes: checkedSizes.length > 0 ? checkedSizes : ["S", "M", "L"],
+          colors: [{ id: slugify(colorName), name: colorName, swatch: colorHexVal }],
+          sizes: checkedSizes,
           details: [
             fabric || "4-way technical stretch woven shell",
             fit || "Athletic tailored cut. True to size.",
@@ -990,7 +955,7 @@ function setupProductUpload() {
         };
 
         customProducts.unshift(newPiece);
-        saveCustomProducts();
+        if (!await saveCustomProducts(newPiece)) return;
 
         closeProductModal();
         renderInventory();
@@ -1036,21 +1001,18 @@ function setupAnnouncementControl() {
 
   if (!form || !input) return;
 
-  const saved = localStorage.getItem("runaway_announcement");
-  if (saved) {
-    input.value = saved;
-  }
   const updatePreview = () => {
     if (preview) preview.textContent = input.value.trim() || "Your announcement will appear here.";
   };
   input.addEventListener("input", updatePreview);
   updatePreview();
 
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = input.value.trim();
     if (val) {
-      localStorage.setItem("runaway_announcement", val);
+      try { await catalogueAction({ action: 'announcement', value: val }); }
+      catch (error) { if (status) status.textContent = error.message; return; }
       updatePreview();
       if (status) {
         status.textContent = "Storefront marquee banner updated successfully.";
@@ -1059,8 +1021,9 @@ function setupAnnouncementControl() {
     }
   });
 
-  clearBtn?.addEventListener("click", () => {
-    localStorage.removeItem("runaway_announcement");
+  clearBtn?.addEventListener("click", async () => {
+    try { await catalogueAction({ action: 'announcement', value: '' }); }
+    catch (error) { if (status) status.textContent = error.message; return; }
     input.value = "";
     updatePreview();
     if (status) {
@@ -1175,8 +1138,10 @@ function setupEvents() {
   $("logoutBtn")?.addEventListener("click", async () => {
     try { await ownerFetch('/api/admin-session', { method: 'DELETE' }); }
     catch (error) { alert(error.message); return; }
-    sessionStorage.removeItem("runaway_owner_session");
-    sessionStorage.removeItem("runaway_owner_login_time");
+    try {
+      sessionStorage.removeItem("runaway_owner_session");
+      sessionStorage.removeItem("runaway_owner_login_time");
+    } catch {}
     window.location.replace("login.html");
   });
 }
@@ -1188,12 +1153,25 @@ function refresh() {
 
 // Initialize
 document.addEventListener("DOMContentLoaded", async () => {
-  loadCustomProducts();
-  loadDeletedSlugs();
+  if (!await ownerSessionReady) return;
   orders = [];
   setupEvents();
   setupProductUpload();
   setupAnnouncementControl();
+  $('importBrowserBtn')?.addEventListener('click', async () => {
+    const button = $('importBrowserBtn');
+    try {
+      const products = JSON.parse(localStorage.getItem('runaway_custom_products') || '[]');
+      const hidden = JSON.parse(localStorage.getItem('runaway_deleted_slugs') || '[]');
+      const announcement = localStorage.getItem('runaway_announcement') || '';
+      if (!products.length && !hidden.length && !announcement) { alert('No older catalogue data was found on this browser address.'); return; }
+      if (!confirm('Import the older products, hidden pieces and announcement from this browser? Matching products will be replaced with the browser versions. This import runs once per database.')) return;
+      button.disabled = true;
+      await catalogueAction({ action: 'import', products: products.map(productForSave), hidden, announcement });
+      alert('Shared catalogue loaded. Browser imports run once; existing browser data has been kept as a backup.');
+    } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
+  });
   renderMetrics();
   renderOrders();
   renderInventory();
@@ -1207,14 +1185,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (error) { $('ordersSyncStatus').textContent = error.message; }
     finally { button.disabled = false; }
   });
-  try { await loadSharedOrders(); }
+  try { await Promise.all([loadSharedOrders(), loadSharedCatalogue()]); }
   catch (error) { $('ordersSyncStatus').textContent = error.message; }
 });
 
-window.addEventListener("storage", (event) => {
-  if (event.key === "runaway_custom_products") {
-    loadCustomProducts();
-    renderInventory();
-  }
-});
+window.addEventListener('focus', () => { if (catalogueReady) loadSharedCatalogue().catch(() => {}); });
 

@@ -1,5 +1,6 @@
 import { clean, failure, HttpError, json, readJson, sameOrigin } from '../lib/http.mjs';
 import { authRequest, createSessionToken, isOwner, requireOwner, sessionCookie, verifySecretKey } from '../lib/admin.mjs';
+import { rateLimit } from '../lib/rate-limit.mjs';
 
 export async function GET(request) {
   try { await requireOwner(request); return json(200, { ok: true }); } catch (error) { return failure(error); }
@@ -8,6 +9,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     sameOrigin(request);
+    await rateLimit(request, 'owner-login', 8, 900);
     const body = await readJson(request);
 
     // 1. Secret Key / Passcode authentication (No Supabase user email verification needed)
@@ -20,8 +22,7 @@ export async function POST(request) {
         throw new HttpError(401, 'Invalid owner secret key.');
       }
       const token = createSessionToken();
-      // 7-day session cookie
-      return json(200, { ok: true }, { 'Set-Cookie': sessionCookie(request, token, 7 * 86400) });
+      return json(200, { ok: true }, { 'Set-Cookie': sessionCookie(request, token, 3600) });
     }
 
     // 2. Fallback: Supabase Auth email+password (if email provided)

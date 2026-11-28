@@ -1,0 +1,13 @@
+.git/
+.env*
+.agents/
+.codex/
+.aws/
+.tools/
+scratch/
+tests/
+supabase/
+docs/
+red/
+dist/
+README.md

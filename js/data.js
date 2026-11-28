@@ -98,29 +98,29 @@ const money = (amount) =>
     maximumFractionDigits: 0,
   }).format(Number.isFinite(amount) && amount > 0 ? amount : 0);
 
-function getCustomProducts() {
-  const storage = typeof window !== "undefined" ? window.localStorage : (typeof localStorage !== "undefined" ? localStorage : null);
-  if (!storage) return [];
-  try {
-    const raw = JSON.parse(storage.getItem("runaway_custom_products") || "[]");
-    return Array.isArray(raw) ? raw : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function getDeletedSlugs() {
-  const storage = typeof window !== "undefined" ? window.localStorage : (typeof localStorage !== "undefined" ? localStorage : null);
-  if (!storage) return [];
-  try {
-    const raw = JSON.parse(storage.getItem("runaway_deleted_slugs") || "[]");
-    return Array.isArray(raw) ? raw : [];
-  } catch (e) {
-    return [];
-  }
-}
+let sharedShop = null;
+let shopLoadError = '';
+const shopReady = typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)
+  ? fetch('/api/shop', { signal: AbortSignal.timeout(12000) }).then(async response => {
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load the shop.');
+    sharedShop = data;
+    return data;
+  }).catch(error => {
+    shopLoadError = error.message;
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.textContent = 'Shop data could not be loaded. Please refresh shortly.';
+    message.style.cssText = 'position:fixed;bottom:1rem;left:1rem;right:1rem;z-index:9999;padding:1rem;background:#161616;color:#fff;border:1px solid #c9a84c';
+    document.body.appendChild(message);
+    return null;
+  }) : Promise.resolve(null);
+function getCustomProducts() { return sharedShop?.products || []; }
+function getDeletedSlugs() { return []; }
 
 function getAllProducts() {
+  if (sharedShop) return sharedShop.products;
+  if (shopLoadError) return [];
   const deleted = new Set(getDeletedSlugs());
   const custom = getCustomProducts();
   const customMap = new Map(custom.map((p) => [p.slug, p]));

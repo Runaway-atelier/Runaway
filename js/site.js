@@ -12,7 +12,39 @@ const Cart = {
       this.items = Array.isArray(v) ? v.filter((i) => i && i.key && i.qty > 0) : [];
     } catch { this.items = []; }
   },
-  save() { try { localStorage.setItem(this.KEY, JSON.stringify(this.items)); } catch {} },
+  syncQueue: Promise.resolve(),
+  mutationVersion: 0,
+  save() {
+    this.mutationVersion++;
+    try { localStorage.setItem(this.KEY, JSON.stringify(this.items)); } catch {}
+    if (!this.remoteReady) return;
+    const items = this.items.map(({ slug, size, color, qty }) => ({ slug, size, color, qty }));
+    this.syncQueue = this.syncQueue.catch(() => {}).then(async () => {
+      const response = await fetch('/api/cart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }), signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Your bag could not be saved online.');
+    }).catch(error => { toast(error.message); });
+  },
+  async hydrate() {
+    if (typeof shopReady === 'undefined' || !/^https?:$/.test(window.location.protocol)) return;
+    const startedAtVersion = this.mutationVersion;
+    const shop = await shopReady;
+    if (!shop) return;
+    try {
+      const response = await fetch('/api/cart', { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Your saved bag is unavailable.');
+      const data = await response.json();
+      if (startedAtVersion !== this.mutationVersion) { this.remoteReady = true; this.save(); return; }
+      const existing = this.items;
+      const source = data.items.length ? data.items : existing;
+      this.items = source.flatMap(item => {
+        const p = getProduct(item.slug), c = p?.colors.find(c => c.id === item.color);
+        return p && c && p.sizes.includes(item.size) ? [{ ...item, name: p.name, price: p.price, colorName: c.name, image: c.images?.[0] || p.images?.[0], key: `${item.slug}__${item.size}__${item.color}` }] : [];
+      });
+      this.remoteReady = true;
+      if (!data.items.length && existing.length) this.save();
+      paintBag();
+    } catch (error) { toast(error.message); }
+  },
   add(item, qty = 1) {
     const key = `${item.slug}__${item.size}__${item.color}`;
     const found = this.items.find((i) => i.key === key);
@@ -21,8 +53,9 @@ const Cart = {
     const alreadyInBag = this.items.filter((entry) => entry.slug === item.slug).reduce((sum, entry) => sum + entry.qty, 0);
     const available = tracked ? Math.max(0, Number(product.stock) - alreadyInBag) : 99;
     if (available < 1) { toast("This piece is out of stock."); return false; }
-    const requested = Math.max(1, Math.min(99, Number(qty) || 1));
-    const accepted = Math.min(requested, available);
+    const requested = Math.max(1, Math.min(20, Number(qty) || 1));
+    const accepted = Math.min(requested, available, 20 - (found?.qty || 0));
+    if (accepted < 1) { toast('Maximum 20 of this size and colour per order.'); return false; }
     if (accepted < requested) toast(`Only ${accepted + (found?.qty || 0)} left in stock.`);
     if (found) found.qty += accepted;
     else this.items.push({ ...item, key, qty: accepted });
@@ -107,7 +140,18 @@ if (!reduceMotion) {
 
 /* ── marquee seamless loop ── */
 const track = $("marqueeTrack");
-if (track) track.innerHTML += track.innerHTML + track.innerHTML;
+if (track) {
+  const original = track.innerHTML;
+  if (typeof shopReady !== 'undefined') shopReady.then(shop => {
+    track.innerHTML = '';
+    if (shop?.announcement) {
+      const span = document.createElement('span'); span.textContent = shop.announcement;
+      track.appendChild(span);
+    } else track.innerHTML = original;
+    track.innerHTML += track.innerHTML + track.innerHTML;
+  });
+  else track.innerHTML += original + original;
+}
 
 /* ── reveal on scroll ── */
 const io = new IntersectionObserver((entries) => {
@@ -342,7 +386,7 @@ function paintBag() {
       <form class="checkout-form" id="coForm" style="display:flex;flex-direction:column;gap:.75rem;">
         <div>
           <p class="muted small" style="margin-bottom:.2rem;">Lagos Atelier & Nationwide Express Courier</p>
-          <span class="subtle" style="font-size:.7rem;">Secure payment by Paystack. You’ll return here after payment.</span>
+          <span class="subtle" style="font-size:.7rem;">${typeof sharedShop !== 'undefined' && sharedShop?.environment === 'test' ? 'Test checkout — no real money is charged.' : 'Secure payment by Paystack. You’ll return here after payment.'}</span>
         </div>
         <label>Full Name *<input id="coName" value="${esc(coName)}" autocomplete="name" placeholder="e.g. Adebayo Adeleke" required /></label>
         <label>Email Address *<input id="coEmail" type="email" value="${esc(coEmail)}" autocomplete="email" placeholder="e.g. adebayo@runners.ng" required /></label>
@@ -428,7 +472,7 @@ function paintBag() {
         try { sessionStorage.setItem("runaway_pending_payment", JSON.stringify({ reference: result.reference, orderId: result.orderId })); } catch {}
         window.location.assign(result.authorizationUrl);
       } catch (error) {
-        $("coErr").textContent = error.message && !error.message.includes("JSON") ? error.message : "Payment service is unavailable here. Run the site with Vercel Dev and configure PAYSTACK_SECRET_KEY.";
+        $("coErr").textContent = error.message && !error.message.includes("JSON") ? error.message : "Payment is unavailable. Please try again shortly.";
         if (placeButton) { placeButton.disabled = false; placeButton.querySelector("span").textContent = "Continue to secure payment ↗"; }
       }
     };
@@ -438,7 +482,7 @@ function paintBag() {
 
   const resolveCartImg = (imgSrc) => {
     if (!imgSrc) return basePrefix + "public/images/logo-runners.png";
-    if (imgSrc.startsWith("data:") || imgSrc.startsWith("http")) return imgSrc;
+    if (imgSrc.startsWith("data:") || imgSrc.startsWith("http") || imgSrc.startsWith('/')) return imgSrc;
     // Strip any leading ./ or ../ or public/images/
     const filename = imgSrc.replace(/^(\.\.\/|\.\/)+/, "").replace(/^public\/images\//, "");
     return basePrefix + "public/images/" + filename;
@@ -475,11 +519,13 @@ $("drawerBody")?.addEventListener("click", (e) => {
   if (rem) { Cart.items = Cart.items.filter((i) => i.key !== rem.dataset.rem); Cart.save(); paintBag(); }
 });
 if (drawerRoot) paintBag();
+Cart.hydration = Cart.hydrate();
 
 async function handlePaymentReturn() {
   const params = new URLSearchParams(window.location.search);
   const reference = params.get("reference") || params.get("trxref");
   if (!reference) return;
+  await Cart.hydration;
   const pending = (() => { try { return JSON.parse(sessionStorage.getItem("runaway_pending_payment") || "null"); } catch { return null; } })();
 
   paymentCallbackStatus = "Checking your payment securely…";
@@ -504,25 +550,6 @@ async function handlePaymentReturn() {
     const order = result.order;
     if (pending?.reference === reference && order.id !== pending.orderId) throw new Error("Payment reference did not match this order.");
     history.replaceState({}, "", `${location.pathname}${location.hash}`);
-    try {
-    let orders = [];
-    try { orders = JSON.parse(localStorage.getItem("runaway_orders") || "[]"); } catch {}
-    if (!orders.some((entry) => entry.id === order.id)) {
-      orders.unshift(order);
-      localStorage.setItem("runaway_orders", JSON.stringify(orders));
-      const products = JSON.parse(localStorage.getItem("runaway_custom_products") || "[]");
-      let stockChanged = false;
-      for (const item of order.items) {
-        const product = products.find((entry) => entry.slug === item.slug);
-        if (product && product.stock !== undefined && product.stock !== null && Number.isFinite(Number(product.stock))) {
-          product.stock = Math.max(0, Number(product.stock) - Number(item.qty || 1));
-          stockChanged = true;
-        }
-      }
-      if (stockChanged) localStorage.setItem("runaway_custom_products", JSON.stringify(products));
-    }
-
-    } catch { /* Browser storage is optional; the server has already saved the order. */ }
     coName = order.customer.name;
     coEmail = order.customer.email;
     coPhone = order.customer.phone;
@@ -594,7 +621,8 @@ function ensureTrackOrderModal() {
         </div>
         <div style="margin-top:1.2rem;">
           <form id="trackOrderForm" style="display:flex;gap:.5rem;flex-wrap:wrap;">
-            <input type="text" id="trackQueryInput" placeholder="Order ID (e.g. RW-1048) or Email" style="flex:1;min-width:14rem;padding:.65rem .8rem;background:var(--surface);border:1px solid var(--line);color:var(--fg);font-family:inherit;font-size:.85rem;border-radius:2px;" required />
+            <input type="text" id="trackQueryInput" placeholder="Order ID (RW-…)" style="flex:1;min-width:14rem;padding:.65rem .8rem;background:var(--surface);border:1px solid var(--line);color:var(--fg);font-family:inherit;font-size:.85rem;border-radius:2px;" required />
+            <input type="email" id="trackEmailInput" placeholder="Email used at checkout" autocomplete="email" style="flex:1;min-width:14rem;padding:.65rem .8rem;background:var(--surface);border:1px solid var(--line);color:var(--fg);font-family:inherit;" required />
             <button type="submit" class="btn btn-gold"><span>Look Up ↗</span></button>
           </form>
           <div id="trackOrderResult" style="margin-top:1.2rem;"></div>
@@ -606,41 +634,41 @@ function ensureTrackOrderModal() {
     $("closeTrackBtn")?.addEventListener("click", closeTrackOrderModal);
     $("closeTrackBackdrop")?.addEventListener("click", closeTrackOrderModal);
 
-    $("trackOrderForm")?.addEventListener("submit", (e) => {
+    $("trackOrderForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const q = $("trackQueryInput")?.value?.trim().toLowerCase();
       const out = $("trackOrderResult");
       if (!q || !out) return;
 
-      let orders = [];
+      out.textContent = 'Looking up your order…';
+      let found;
       try {
-        orders = JSON.parse(localStorage.getItem("runaway_orders") || "[]");
-      } catch (_) {}
-
-      const found = orders.find((o) => 
-        (o.id || "").toLowerCase() === q || 
-        (o.customer?.email || "").toLowerCase() === q ||
-        (o.customer?.phone || "").replace(/\s+/g, "") === q.replace(/\s+/g, "")
-      );
+        const response = await fetch('/api/order-tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: q, email: $('trackEmailInput')?.value?.trim() }), signal: AbortSignal.timeout(12000) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not look up your order.');
+        found = data.order;
+      } catch (error) { out.textContent = error.message; return; }
 
       if (!found) {
         out.innerHTML = `
           <div style="padding:1rem;background:var(--surface);border:1px solid var(--line);border-radius:2px;">
-            <p class="small muted">No active order found matching "<b>${q}</b>".</p>
-            <p class="subtle" style="font-size:.75rem;margin-top:.3rem;">Please double-check your Order ID (format: RW-XXXX) or the email entered during checkout.</p>
+            <p class="small muted">No matching paid order found.</p>
+            <p class="subtle" style="font-size:.75rem;margin-top:.3rem;">Please check your order ID and checkout email.</p>
           </div>`;
         return;
       }
 
-      const fulfillment = found.fulfillmentStatus || (found.status === "Fulfilled" ? "Shipped" : found.status || "Pending");
+      const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const fulfillment = found.fulfillmentStatus || 'Pending';
       const statusText = fulfillment === "Shipped" || fulfillment === "Delivered" ? `${fulfillment}${found.carrier ? ` · ${found.carrier}` : ""}` : fulfillment === "Cancelled" ? "Order cancelled" : "Order being prepared";
       const badgeClass = fulfillment === "Shipped" || fulfillment === "Delivered" ? "badge-fulfilled" : fulfillment === "Cancelled" ? "badge-cancelled" : "badge-pending";
 
       const itemsList = (found.items || []).map((it) => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--line);font-size:.82rem;">
           <div>
-            <b>${it.qty || 1}x ${it.name}</b>
-            <div class="subtle" style="font-size:.72rem;">${it.colorName ? it.colorName + " · " : ""}Size: ${it.size || "M"}</div>
+            <b>${Number(it.qty) || 1}x ${esc(it.name)}</b>
+            <div class="subtle" style="font-size:.72rem;">${it.colorName ? esc(it.colorName) + " · " : ""}Size: ${esc(it.size || "M")}</div>
           </div>
           <span class="gold tabular">${money((it.price || 0) * (it.qty || 1))}</span>
         </div>
@@ -650,15 +678,10 @@ function ensureTrackOrderModal() {
         <div style="padding:1.2rem;background:var(--surface);border:1px solid var(--gold-line);border-radius:2px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem;">
             <div>
-              <span class="gold tabular" style="font-size:1.1rem;font-weight:600;">${found.id}</span>
+              <span class="gold tabular" style="font-size:1.1rem;font-weight:600;">${esc(found.id)}</span>
               <div class="subtle" style="font-size:.72rem;">Placed: ${new Date(found.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
             </div>
-            <span class="${badgeClass}">${statusText}</span>
-          </div>
-
-          <div style="margin-bottom:.8rem;padding:.7rem;background:var(--elev);border:1px solid var(--line);border-radius:2px;font-size:.78rem;">
-            <div style="font-weight:500;color:var(--fg);">${found.customer?.name || "Runner"} · ${found.customer?.phone || ""}</div>
-            <div class="subtle" style="margin-top:.15rem;">${found.customer?.address || "Address on file"}, ${found.customer?.city || ""}, ${found.customer?.state || "Lagos"}</div>
+            <span class="${badgeClass}">${esc(statusText)}</span>
           </div>
 
           <div style="margin-bottom:.8rem;">
@@ -667,10 +690,10 @@ function ensureTrackOrderModal() {
           </div>
 
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:.4rem;">
-            <span class="subtle" style="font-size:.8rem;">Order total · ${found.paymentStatus || "Unpaid"}</span>
+            <span class="subtle" style="font-size:.8rem;">Order total · ${esc(found.paymentStatus || "Unpaid")}</span>
             <b class="gold tabular" style="font-size:1.1rem;">${money(found.total)}</b>
           </div>
-          ${found.trackingNumber ? `<p class="subtle" style="font-size:.75rem;margin-top:.6rem;">Tracking: ${found.trackingNumber}</p>` : ""}
+          ${found.trackingNumber ? `<p class="subtle" style="font-size:.75rem;margin-top:.6rem;">Tracking: ${esc(found.trackingNumber)}</p>` : ""}
         </div>
       `;
     });

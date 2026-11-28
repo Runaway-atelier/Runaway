@@ -1,109 +1,16 @@
-/* RUNAWAY redesign — vanilla JS: catalogue, filters, quickview, cart, motion */
-"use strict";
-
-const IMG = "./public/images/";
-
-// Relies on PRODUCTS, money, getAllProducts from js/data.js
-
-/* ── loader ── */
-window.addEventListener("load", () =>
-  setTimeout(() => document.getElementById("loader").classList.add("done"), 500)
-);
-setTimeout(() => document.getElementById("loader").classList.add("done"), 2600); // fallback
-
-/* ── header / menu ── */
-const header = document.getElementById("siteHeader");
-addEventListener("scroll", () => header.classList.toggle("scrolled", scrollY > 24), { passive: true });
-header.classList.toggle("scrolled", scrollY > 24);
-
-const menuBtn = document.getElementById("menuBtn");
-const mobileNav = document.getElementById("mobileNav");
-menuBtn.addEventListener("click", () => {
-  const open = mobileNav.classList.toggle("open");
-  menuBtn.classList.toggle("open", open);
-  menuBtn.setAttribute("aria-expanded", open);
-  document.body.style.overflow = open ? "hidden" : "";
-});
-document.querySelectorAll("[data-scroll]").forEach((a) =>
-  a.addEventListener("click", () => {
-    mobileNav.classList.remove("open");
-    menuBtn.classList.remove("open");
-    document.body.style.overflow = "";
-  })
-);
-
-/* ── cursor aura + hero/craft parallax ── */
-const aura = document.getElementById("aura");
-let ax = -500, ay = -500, tx = ax, ty = ay;
-addEventListener("pointermove", (e) => { tx = e.clientX; ty = e.clientY; }, { passive: true });
-(function auraLoop() {
-  ax += (tx - ax) * 0.08; ay += (ty - ay) * 0.08;
-  aura.style.left = ax + "px"; aura.style.top = ay + "px";
-  requestAnimationFrame(auraLoop);
-})();
-
-const heroBg = document.querySelector("#heroBg img");
-const craftBg = document.getElementById("craftBg");
-const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-if (!reduceMotion) {
-  addEventListener("scroll", () => {
-    const y = scrollY;
-    if (y < innerHeight * 1.2) heroBg.style.transform = `translateY(${y * 0.22}px) scale(1.05)`;
-    const c = document.getElementById("craft").getBoundingClientRect();
-    if (c.top < innerHeight && c.bottom > 0)
-      craftBg.style.transform = `translateY(${c.top * -0.08}px)`;
-  }, { passive: true });
-}
-
-/* ── marquee: dynamic announcement banner + seamless loop ── */
-const track = document.getElementById("marqueeTrack");
-if (track) {
-  try {
-    const customAnnounce = localStorage.getItem("runaway_announcement");
-    if (customAnnounce && customAnnounce.trim()) {
-      track.innerHTML = `<span>${customAnnounce.trim()}</span><b>//</b><span>RUNAWAY ATHLETICISM</span><b>//</b><span>COLLECTION 01</span><b>//</b>`;
-    }
-  } catch (_) {}
-  track.innerHTML += track.innerHTML + track.innerHTML;
-}
-
-/* ── tilt cards ── */
-if (matchMedia("(hover:hover)").matches && !reduceMotion) {
-  document.querySelectorAll(".tilt").forEach((el) => {
-    el.addEventListener("pointermove", (e) => {
-      const r = el.getBoundingClientRect();
-      const x = (e.clientX - r.left) / r.width - 0.5;
-      const y = (e.clientY - r.top) / r.height - 0.5;
-      el.style.transform = `perspective(900px) rotateY(${x * 7}deg) rotateX(${-y * 7}deg)`;
-    });
-    el.addEventListener("pointerleave", () => (el.style.transform = ""));
-  });
-}
-
-/* ── reveal on scroll + counters ── */
-const io = new IntersectionObserver((entries) => {
-  entries.forEach((en) => {
-    if (!en.isIntersecting) return;
-    en.target.classList.add("in");
-    en.target.querySelectorAll("[data-count]").forEach(runCounter);
-    if (en.target.hasAttribute("data-count")) runCounter(en.target);
-    io.unobserve(en.target);
-  });
-}, { threshold: 0.15 });
-document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
-
-function runCounter(el) {
-  if (el.dataset.done) return;
-  el.dataset.done = "1";
-  const end = +el.dataset.count, t0 = performance.now(), dur = 1200;
-  (function tick(t) {
-    const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
-    el.textContent = Math.round(end * e);
-    if (p < 1) requestAnimationFrame(tick);
-  })(t0);
-}
-
-/* ── product grid + filters (supports custom uploaded pieces) ── */
+/* Home catalogue and quickview; shared chrome lives in site.js. */
+(async () => {
+await shopReady;
+const heroBg = document.querySelector('#heroBg img');
+const craftBg = document.getElementById('craftBg');
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) addEventListener('scroll', () => {
+  if (heroBg && scrollY < innerHeight * 1.2) heroBg.style.transform = `translateY(${scrollY * 0.22}px) scale(1.05)`;
+  const craft = document.getElementById('craft');
+  if (craft && craftBg) {
+    const rect = craft.getBoundingClientRect();
+    if (rect.top < innerHeight && rect.bottom > 0) craftBg.style.transform = `translateY(${rect.top * -0.08}px)`;
+  }
+}, { passive: true });
 const grid = document.getElementById("productGrid");
 let activeFilter = "All";
 
@@ -112,10 +19,10 @@ function resolveProductImage(p, idx = 0, color = (p.colors || [])[0]) {
   const images = Array.isArray(color?.images) && color.images.length ? color.images : p.images;
   if (images && images[idx]) {
     const src = images[idx];
-    return (src.startsWith("data:") || src.startsWith("http")) ? src : IMG + src;
+    return (src.startsWith("data:") || src.startsWith("http") || src.startsWith("/") || src.startsWith(".")) ? src : IMG + src;
   }
   if (p.image) {
-    return (p.image.startsWith("data:") || p.image.startsWith("http")) ? p.image : IMG + p.image;
+    return (p.image.startsWith("data:") || p.image.startsWith("http") || p.image.startsWith("/") || p.image.startsWith(".")) ? p.image : IMG + p.image;
   }
   return IMG + "logo-runners.png";
 }
@@ -280,3 +187,5 @@ document.getElementById("qvAdd")?.addEventListener("click", () => {
 });
 
 
+
+})();

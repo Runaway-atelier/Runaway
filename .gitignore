@@ -25,6 +25,22 @@ scratch/
 .env
 .env.*
 !.env.example
+.aws/
+.ssh/
+*.pem
+*.key
 
+# Dependencies and package caches
 node_modules/
+.npm/
+.pnpm-store/
+
+# Deployment metadata and generated storefront
 .vercel/
+dist/
+
+# Test reports and coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/

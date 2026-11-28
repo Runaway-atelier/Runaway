@@ -1,6 +1,7 @@
 /* RUNAWAY redesign — product detail renderer. Reads body[data-product-slug]. */
 "use strict";
-(function () {
+(async function () {
+  await shopReady;
   const params = new URLSearchParams(window.location.search);
   const slug = document.body.dataset.productSlug || params.get("slug") || params.get("id");
   const p = typeof getProduct === "function" ? getProduct(slug) : null;

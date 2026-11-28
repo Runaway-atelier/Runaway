@@ -5,7 +5,7 @@ The code is ready for configuration; running it locally does not create service 
 ## 1. Create the private order database
 
 1. Create a Supabase project.
-2. Run [`20261123_payments.sql`](../supabase/migrations/20261123_payments.sql) once in its SQL editor. The migration is transactional and creates three private tables plus server-only functions.
+2. Run [`20261123_payments.sql`](../supabase/migrations/20261123_payments.sql), then [`20261125_shared_store.sql`](../supabase/migrations/20261125_shared_store.sql), then [`20261125180000_production.sql`](../supabase/migrations/20261125180000_production.sql). The migrations are transactional and create eight private tables plus server-only functions. Existing installations only need migrations not yet applied. Run `npm run verify:storage` afterward. See [production launch](production-launch.md) before deploying or switching to live payments.
 3. Copy the project URL and **legacy service-role key** into server environment variables `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Do not use an anonymous key for this backend. Do not put either secret key into frontend JavaScript.
 4. In Supabase Authentication, create and confirm your owner user. Set `ADMIN_EMAIL` to that user's email. Use that email and password at `/admin/login`; the old public passcodes have been removed. Public signup is unnecessary and can be disabled.
 
@@ -31,7 +31,7 @@ Newsletter subscriptions continue through `/api/order-email`. Contact management
 4. If your account still sends only `x-paystack-signature`, explicitly set `PAYSTACK_ALLOW_LEGACY_WEBHOOKS=true`. This verifies the legacy HMAC with the Paystack API secret. Once modern signatures are enabled, turn this switch off. An invalid modern header never falls back to legacy validation.
 5. During signing-secret rotation, optionally set `PAYSTACK_PREVIOUS_WEBHOOK_SECRET` during the overlap, then remove it.
 
-The server calculates prices in naira from the core catalogue and sends kobo to Paystack. It saves the order before initialization and sends only its order ID in Paystack metadata. Settlement checks provider status, reference, amount, NGN currency, customer email, order ID and test/live environment against the saved order. Callback and webhook use the same atomic settlement function.
+The server calculates prices in naira from the shared database catalogue and sends kobo to Paystack. It atomically saves the order and reserves stock before initialization, and sends only its order ID in Paystack metadata. Settlement checks provider status, reference, amount, NGN currency, customer email, order ID and test/live environment against the saved order. Callback and webhook use the same atomic settlement function.
 
 Payment references are unguessable bearer links: someone possessing a reference can retrieve that order's confirmation. Do not publish references or include them in analytics. A missing browser session does not prevent a valid return link from recovering its order.
 
@@ -84,7 +84,7 @@ Then configure live Paystack keys and the **live** webhook/signing secret. Confi
 
 ## Scope and operations
 
-Orders and fulfillment updates are shared. Inventory edits and announcements remain browser-local; custom products are not eligible for checkout. Server prices are defined in `lib/catalog.mjs`; keep storefront catalogue prices consistent with it. Refunds, disputes, inventory reservations and shipment notification emails are not automated by this integration. Customer tracking on the storefront still uses that browser's cached orders; the owner dashboard reads the shared database. Older prototype orders are not silently imported or reconstructed from browser data.
+Orders, fulfillment, catalogue edits, stock, announcements, guest bags and newsletter signups are stored in Supabase. Custom products are eligible for checkout at their saved prices. Checkout reserves product-level stock for 30 minutes; new checkout and the retry worker release expired unpaid reservations. Customer tracking reads current database fulfillment using order ID plus checkout email. Refunds, disputes and shipment notification emails are not automated. Older prototype orders are not silently imported or reconstructed from browser data. See [storage setup](storage-setup.md) for browser-data import and stock reconciliation.
 
 Owner sessions expire after at most an hour and require signing in again. The service-role key is used only by server functions; protect server configuration and disable unused public Auth signup. Configure retention for abandoned pending orders and customer data according to shop policy. Review `shop_email_outbox` for `review` jobs and `shop_email_events` for delivery problems.
 

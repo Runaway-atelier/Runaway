@@ -121,6 +121,8 @@
 <script src="./js/data.js"></script>
 <script src="./js/site.js"></script>
 <script>
+(async () => {
+await shopReady;
 /* collection page: dynamic category chips, live search, sorting, and cards */
 "use strict";
 const grid = document.getElementById("productGrid");
@@ -136,10 +138,10 @@ function resolveProductImage(p, idx = 0, color = (p.colors || [])[0]) {
   const images = Array.isArray(color?.images) && color.images.length ? color.images : p.images;
   if (images && images[idx]) {
     const src = images[idx];
-    return (src.startsWith("data:") || src.startsWith("http")) ? src : IMG + src;
+    return (src.startsWith("data:") || src.startsWith("http") || src.startsWith("/") || src.startsWith(".")) ? src : IMG + src;
   }
   if (p.image) {
-    return (p.image.startsWith("data:") || p.image.startsWith("http")) ? p.image : IMG + p.image;
+    return (p.image.startsWith("data:") || p.image.startsWith("http") || p.image.startsWith("/") || p.image.startsWith(".")) ? p.image : IMG + p.image;
   }
   return IMG + "logo-runners.png";
 }
@@ -271,6 +273,7 @@ grid.addEventListener("click", (e) => {
   Cart.add({ slug: p.slug, name: p.name, price: p.price, size, color: colorObj.id, colorName: colorObj.name, image: cartImg });
   paintBag(); toast(`${p.name} — added to bag`); openDrawer();
 });
+})();
 </script>
 </body>
 </html>
